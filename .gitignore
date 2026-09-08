@@ -1,0 +1,12 @@
+node_modules/
+dist/
+src-tauri/target/
+.env
+*.key
+outputs/
+work/
+ci-artifacts/
+.env.*
+*.p12
+*.p8
+*.pem

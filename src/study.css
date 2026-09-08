@@ -1,0 +1,447 @@
+.session-heading,
+.set-heading,
+.viewer-nav,
+.study-options,
+.secondary-modes,
+.edit-card-head,
+.attachment-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.session-heading {
+  justify-content: space-between;
+  margin-bottom: 26px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.set-heading {
+  margin-bottom: 36px;
+  align-items: center;
+}
+.set-heading h1 {
+  margin: 4px 0;
+  font-size: 30px;
+}
+.set-heading p {
+  color: var(--muted);
+  margin: 6px 0;
+}
+.set-heading > button {
+  margin-left: auto;
+}
+.set-cover {
+  width: 90px;
+  height: 90px;
+  background: var(--soft);
+  border-radius: 12px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  font-size: 40px;
+  color: var(--orange);
+}
+.set-cover .study-image {
+  width: 100%;
+  height: 90px;
+  object-fit: cover;
+  margin: 0;
+}
+.set-overview h2 {
+  font-size: 17px;
+}
+.primary-modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.primary-modes button {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  text-align: left;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+}
+.primary-modes button:first-child {
+  border-color: var(--orange);
+}
+.primary-modes b {
+  font-size: 17px;
+  color: var(--orange);
+}
+.primary-modes span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.secondary-modes {
+  margin: 16px 0 32px;
+}
+.set-card-list > div {
+  display: grid;
+  grid-template-columns: 25px 1fr 1fr;
+  gap: 24px;
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+}
+.set-card-list p {
+  margin: 0;
+}
+.set-card-list .study-image {
+  max-height: 90px;
+  max-width: 150px;
+}
+.set-card-list small {
+  color: var(--muted);
+}
+.viewer,
+.learn-session,
+.worksheet {
+  max-width: 850px;
+  margin: auto;
+}
+.viewer-count {
+  text-align: center;
+  color: var(--muted);
+}
+.viewer-card {
+  position: relative;
+  min-height: 340px;
+  transform-style: preserve-3d;
+  transition: transform 0.3s ease;
+  cursor: pointer;
+}
+.viewer-card.is-flipped {
+  transform: rotateY(180deg);
+}
+.viewer-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  backface-visibility: hidden;
+  overflow: auto;
+}
+.viewer-face h1 {
+  text-align: center;
+  font-size: 28px;
+  white-space: pre-wrap;
+}
+.viewer-face small {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+}
+.viewer-back {
+  transform: rotateY(180deg);
+}
+.viewer-face .study-image {
+  max-height: 180px;
+  max-width: 90%;
+  object-fit: contain;
+}
+.viewer-nav {
+  justify-content: center;
+  margin: 20px 0;
+}
+.viewer-nav span {
+  margin: 0 30px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.study-options {
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+.study-options label {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.study-options input {
+  width: 80px;
+}
+select,
+.study-options input {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+.learn-start,
+.checkpoint,
+.learn-feedback {
+  padding: 28px 0;
+}
+.learn-start h1,
+.checkpoint h1 {
+  font-size: 28px;
+}
+.learn-start p,
+.checkpoint p {
+  color: var(--muted);
+}
+.learn-start details {
+  margin-top: 25px;
+}
+.learn-start details label {
+  display: block;
+  margin: 15px 0;
+}
+.learn-progress {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  font-size: 13px;
+}
+.learn-progress progress {
+  grid-column: 1/-1;
+  width: 100%;
+  height: 8px;
+  accent-color: var(--orange);
+}
+.learn-question {
+  margin-top: 25px;
+  padding: 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.learn-question > small {
+  color: var(--orange);
+  letter-spacing: 1px;
+}
+.learn-question h1 {
+  font-size: 25px;
+}
+.learn-question form {
+  display: flex;
+  gap: 12px;
+}
+.learn-question form input,
+.worksheet-question > div > input {
+  padding: 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.learn-question .choice-grid button {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  white-space: normal;
+  height: auto;
+  min-height: 45px;
+}
+.learn-question .choice-grid .study-image {
+  max-height: 85px;
+}
+.learn-question > .study-image {
+  max-height: 160px;
+}
+.worksheet-question {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  padding: 24px;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.worksheet-question h2 {
+  font-size: 18px;
+  margin: 0 0 18px;
+}
+.worksheet-question fieldset {
+  border: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.worksheet-question fieldset label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.worksheet-question fieldset input {
+  accent-color: var(--orange);
+}
+.worksheet-question > div > input {
+  width: 100%;
+}
+.worksheet-question .study-image {
+  max-height: 140px;
+}
+.question-number {
+  color: var(--muted);
+}
+.test-score {
+  padding: 20px;
+  background: var(--soft);
+  border-radius: 8px;
+}
+.test-score h2 {
+  font-size: 32px;
+  margin: 0;
+}
+.result-correct,
+.result-wrong {
+  padding: 12px;
+  margin-top: 16px;
+  border-radius: 6px;
+  background: var(--soft);
+}
+.result-correct b {
+  color: #528259;
+}
+.result-wrong b {
+  color: var(--orange);
+}
+.unanswered {
+  padding: 15px;
+  background: var(--soft);
+  margin: 15px 0;
+}
+.unanswered button {
+  display: inline-flex;
+  margin-right: 8px;
+}
+.editor-cards {
+  padding: 20px;
+  background: var(--bg);
+}
+.edit-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.edit-card-head {
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.edit-card-head > div {
+  display: flex;
+  gap: 8px;
+}
+.edit-card-head button {
+  font-size: 12px;
+  padding: 5px 9px;
+  min-height: 28px;
+}
+.edit-card-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  padding: 22px;
+}
+.edit-card-sides label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+.edit-card-sides textarea {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  font-size: 17px;
+  line-height: 1.5;
+  margin: 10px 0 12px;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+.attachment {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.attachment .secondary {
+  font-size: 12px;
+  min-height: 28px;
+  padding: 5px 8px;
+}
+.attachment-thumb {
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  width: 80px;
+  height: 60px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+.attachment-thumb .study-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  margin: 0;
+}
+.attachment-actions {
+  gap: 5px;
+}
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #141612ed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 50px;
+}
+.image-lightbox > button {
+  position: absolute;
+  right: 24px;
+  top: 24px;
+}
+.image-lightbox .study-image {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+}
+.attachment small {
+  color: var(--orange);
+}
+@media (max-width: 1000px) {
+  .edit-card-sides {
+    grid-template-columns: 1fr;
+  }
+  .primary-modes {
+    grid-template-columns: 1fr;
+  }
+  .set-heading {
+    flex-wrap: wrap;
+  }
+  .session-heading {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .viewer-card {
+    transition: none;
+  }
+}

@@ -1,0 +1,541 @@
+:root {
+  --motion-micro: 120ms;
+  --motion-hover: 160ms;
+  --motion-panel: 220ms;
+  --motion-card: 300ms;
+  --motion-page: 240ms;
+  --motion-feedback: 500ms;
+  --ease-ui: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-spring: cubic-bezier(0.2, 0.8, 0.25, 1.08);
+  --success: #307747;
+  --success-bg: #edf7ef;
+  --error: #af3f36;
+  --error-bg: #fff0ed;
+}
+[data-theme="dark"] {
+  --success: #91d3a4;
+  --success-bg: #23362a;
+  --error: #ffaca3;
+  --error-bg: #3b2725;
+}
+html {
+  scrollbar-gutter: stable;
+}
+.viewer-card:not(:disabled):active {
+  transform: scale(0.995);
+}
+.viewer-card.is-flipped:not(:disabled):active {
+  transform: rotateY(180deg) scale(0.995);
+}
+button,
+.secondary,
+summary,
+select {
+  transition:
+    background-color var(--motion-hover) var(--ease-ui),
+    border-color var(--motion-hover) var(--ease-ui),
+    color var(--motion-hover) var(--ease-ui),
+    box-shadow var(--motion-hover) var(--ease-ui),
+    transform var(--motion-micro) var(--ease-ui),
+    opacity var(--motion-hover) var(--ease-ui);
+}
+button:not(:disabled):hover,
+.secondary:hover {
+  border-color: color-mix(in srgb, var(--orange) 65%, var(--line));
+  box-shadow: 0 2px 7px #00000008;
+}
+button:not(:disabled):active {
+  transform: scale(0.985);
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 3px;
+}
+button:disabled {
+  cursor: not-allowed;
+  box-shadow: none;
+}
+input,
+textarea {
+  transition:
+    border-color var(--motion-hover),
+    background-color var(--motion-hover),
+    box-shadow var(--motion-hover);
+}
+.deck {
+  transition:
+    border-color var(--motion-hover),
+    box-shadow var(--motion-hover),
+    transform var(--motion-hover);
+}
+.deck:hover {
+  border-color: color-mix(in srgb, var(--orange) 40%, var(--line));
+  box-shadow: 0 3px 12px #00000006;
+}
+.deck svg {
+  transition:
+    fill var(--motion-hover),
+    color var(--motion-hover);
+}
+.study-image {
+  animation: media-in var(--motion-panel) var(--ease-ui) both;
+}
+.set-heading {
+  animation: rise-in var(--motion-page) var(--ease-ui);
+}
+.primary-modes button {
+  animation: rise-in var(--motion-panel) var(--ease-ui) backwards;
+}
+.primary-modes button:nth-child(2) {
+  animation-delay: 35ms;
+}
+.primary-modes button:nth-child(3) {
+  animation-delay: 70ms;
+}
+.primary-modes button:hover {
+  background: color-mix(in srgb, var(--orange) 5%, var(--surface));
+}
+.viewer-stage {
+  perspective: 1200px;
+  position: relative;
+}
+.viewer-card {
+  transition: transform var(--motion-card) var(--ease-ui);
+  will-change: transform;
+}
+.viewer-face {
+  transition:
+    border-color var(--motion-hover),
+    box-shadow var(--motion-hover);
+}
+.viewer-card:hover .viewer-face {
+  border-color: color-mix(in srgb, var(--orange) 40%, var(--line));
+  box-shadow: 0 5px 14px #00000008;
+}
+.viewer-stage:active .viewer-face {
+  box-shadow: 0 1px 4px #00000006;
+}
+.viewer-face h1 {
+  overflow-wrap: anywhere;
+}
+.viewer-travel {
+  animation: travel-in var(--motion-card) var(--ease-ui) both;
+}
+.viewer-ghost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: travel-out var(--motion-card) var(--ease-ui) both;
+}
+.viewer-ghost .viewer-card {
+  transition: none;
+}
+.viewer-counter {
+  margin: 0 auto 18px;
+  max-width: 250px;
+}
+.viewer-counter .viewer-count {
+  margin: 0 0 9px;
+}
+.viewer-progress-caption {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  margin: 6px 0;
+}
+.motion-progress {
+  height: 5px;
+  border-radius: 8px;
+  background: var(--line);
+  overflow: hidden;
+}
+.motion-progress > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--orange);
+  transform-origin: left;
+  transition: transform var(--motion-card) var(--ease-ui);
+}
+.learn-progress {
+  margin-bottom: 15px;
+}
+.learn-progress .motion-progress {
+  grid-column: 1/-1;
+}
+.wave-progress {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.wave-progress .motion-progress {
+  grid-column: 1/-1;
+  height: 3px;
+}
+.wave-progress .motion-progress > span {
+  background: var(--muted);
+}
+.learn-question {
+  animation: rise-in var(--motion-panel) var(--ease-ui) both;
+  min-height: 290px;
+}
+.learn-question small {
+  display: block;
+}
+.learn-question .choice-grid button {
+  transition:
+    background-color var(--motion-hover),
+    border-color var(--motion-hover),
+    transform var(--motion-micro);
+  position: relative;
+}
+.learn-question .choice-grid button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--orange) 6%, var(--surface));
+}
+.learn-question .choice-grid button.selected {
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 8%, var(--surface));
+}
+.learn-question .choice-grid button.answer-correct,
+.learn-question.answer-correct form input {
+  background: var(--success-bg);
+  border-color: var(--success);
+  color: var(--success);
+  opacity: 1;
+}
+.learn-question .choice-grid button.answer-wrong,
+.learn-question.answer-wrong form input {
+  background: var(--error-bg);
+  border-color: var(--error);
+  color: var(--error);
+  opacity: 1;
+  animation: gentle-shake var(--motion-feedback) var(--ease-ui);
+}
+.choice-outcome {
+  font-weight: 600;
+  font-size: 12px;
+  margin-top: 5px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.feedback-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  animation: check-in var(--motion-panel) var(--ease-spring);
+}
+.answer-feedback {
+  margin-top: 20px;
+  border-radius: 8px;
+  padding: 14px 16px;
+  animation: rise-in var(--motion-panel) var(--ease-ui);
+  background: var(--success-bg);
+  color: var(--success);
+}
+.answer-feedback.wrong {
+  background: var(--error-bg);
+  color: var(--error);
+}
+.answer-feedback > strong {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.answer-feedback p {
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+.answer-feedback .expected-answer {
+  background: var(--success-bg);
+  color: var(--success);
+  padding: 10px;
+  border-radius: 5px;
+  animation: rise-in var(--motion-panel) var(--ease-ui) 80ms backwards;
+}
+.answer-feedback small {
+  margin-top: 9px;
+  letter-spacing: 0;
+}
+.answer-feedback button {
+  margin-top: 10px;
+}
+.learned-tag {
+  animation: check-in var(--motion-panel) var(--ease-spring);
+  font-weight: 600;
+}
+.phase-change,
+.checkpoint {
+  animation: rise-in var(--motion-page) var(--ease-ui);
+}
+.phase-change {
+  padding: 35px 28px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.phase-change h2 {
+  margin: 6px 0;
+}
+.phase-change p {
+  color: var(--muted);
+}
+.checkpoint p {
+  animation: rise-in var(--motion-panel) var(--ease-ui) 60ms backwards;
+}
+.learn-session .session-heading {
+  position: relative;
+}
+.loading-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.motion-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--line);
+  border-top-color: var(--orange);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+.worksheet-question {
+  scroll-margin-top: 95px;
+}
+.worksheet-question:focus-within {
+  border-color: color-mix(in srgb, var(--orange) 55%, var(--line));
+}
+.worksheet-question fieldset label {
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition:
+    border-color var(--motion-hover),
+    background-color var(--motion-hover);
+}
+.worksheet-question fieldset label:has(input:checked) {
+  background: color-mix(in srgb, var(--orange) 6%, var(--surface));
+  border-color: var(--orange);
+}
+.unanswered,
+.test-score,
+.result-correct,
+.result-wrong {
+  animation: rise-in var(--motion-panel) var(--ease-ui) both;
+}
+.test-score h2 {
+  animation: check-in var(--motion-card) var(--ease-spring);
+}
+.edit-card {
+  animation: rise-in var(--motion-panel) var(--ease-ui);
+}
+.edit-card.removing {
+  pointer-events: none;
+  animation: remove-card var(--motion-panel) var(--ease-ui) forwards;
+}
+.attachment-thumb {
+  animation: media-in var(--motion-panel) var(--ease-ui);
+}
+.attachment-thumb.removing {
+  animation: media-out var(--motion-panel) var(--ease-ui) forwards;
+}
+.image-lightbox {
+  animation: fade-in var(--motion-panel) var(--ease-ui);
+}
+.image-lightbox .study-image {
+  animation: modal-in var(--motion-panel) var(--ease-ui);
+}
+details[open] > :not(summary) {
+  animation: rise-in var(--motion-panel) var(--ease-ui);
+}
+.saved-state {
+  transition:
+    color var(--motion-hover),
+    opacity var(--motion-hover);
+}
+.toast {
+  position: fixed;
+  bottom: 25px;
+  right: 25px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(440px, calc(100vw - 40px));
+  padding: 14px 17px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 6px 22px #00000012;
+  animation: rise-in var(--motion-panel) var(--ease-ui);
+}
+.toast > span:first-child {
+  color: var(--success);
+}
+.toast.error > span:first-child {
+  color: var(--error);
+}
+.toast button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+}
+.toast.leaving {
+  animation: media-out var(--motion-panel) var(--ease-ui) forwards;
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes media-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes media-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes check-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes gentle-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  50% {
+    transform: translateX(3px);
+  }
+  75% {
+    transform: translateX(-1px);
+  }
+}
+@keyframes travel-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--travel, 32px));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes travel-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(calc(var(--travel, 32px) * -1));
+  }
+}
+@keyframes remove-card {
+  to {
+    opacity: 0;
+    transform: scaleY(0.96) translateY(-5px);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .viewer-stage {
+    perspective: none;
+  }
+  .viewer-card,
+  .viewer-card.is-flipped {
+    transform: none !important;
+    will-change: auto;
+  }
+  .viewer-back {
+    transform: none;
+  }
+  .viewer-card:not(.is-flipped) .viewer-back,
+  .viewer-card.is-flipped .viewer-face:not(.viewer-back) {
+    visibility: hidden;
+  }
+  .viewer-ghost {
+    display: none;
+  }
+  .viewer-travel,
+  button:active {
+    transform: none !important;
+  }
+  .motion-spinner {
+    animation: none !important;
+    border-color: var(--orange);
+  }
+  .answer-feedback,
+  .checkpoint,
+  .phase-change {
+    animation-name: fade-in !important;
+  }
+}
