@@ -269,10 +269,13 @@ describe("study interactions", () => {
         files: [new File(["replacement"], "cell.webp", { type: "image/webp" })],
       },
     });
+    // Uploads preserve their MIME type; wait for FileReader's replacement,
+    // not the unchanged number of thumbnails from the original PNG upload.
     await waitFor(() =>
-      expect(document.querySelectorAll(".attachment-thumb img")).toHaveLength(
-        4,
-      ),
+      expect(
+        within(screen.getAllByLabelText("question image attachment")[0])
+          .getByRole("img").getAttribute("src"),
+      ).toMatch(/^data:image\/webp/),
     );
     const firstAnswer = screen.getAllByLabelText("answer image attachment")[0];
     fireEvent.click(
@@ -303,6 +306,12 @@ describe("study interactions", () => {
         3,
       ),
     );
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("cover image attachment"))
+        .getByRole("img").getAttribute("src")).toMatch(/^data:image\/png/);
+      expect(within(screen.getAllByLabelText("question image attachment")[0])
+        .getByRole("img").getAttribute("src")).toMatch(/^data:image\/webp/);
+    });
   });
   it("opens a set overview and every mode exits to the same set", async () => {
     localStorage.setItem("flint-decks", JSON.stringify([deck]));

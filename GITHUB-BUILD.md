@@ -10,7 +10,7 @@ Install GitHub CLI if absent (`winget install --id GitHub.cli -e`), then reopen 
 Set-Location 'C:\Users\Redux\Documents\Codex\2026-08-25\cal'
 gh auth login
 git init -b main
-git add .github .gitignore scripts src src-tauri public package.json package-lock.json index.html tsconfig.json vite.config.ts README.md GITHUB-BUILD.md
+git add .github .gitignore scripts src src-tauri public package.json package-lock.json index.html tsconfig.json vite.config.ts vitest.config.ts README.md GITHUB-BUILD.md
 git diff --cached --stat
 git commit -m "Prepare Flint desktop builds"
 gh repo create flint --private --source=. --remote=origin --push
