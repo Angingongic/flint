@@ -77,7 +77,7 @@ export function normalize(
   s: string,
   { caseSensitive = false, punctuation = false } = {},
 ) {
-  let v = s.trim().replace(/\s+/g, " ");
+  let v = s.normalize("NFC").trim().replace(/\s+/g, " ");
   if (!caseSensitive) v = v.toLowerCase();
   if (!punctuation) v = v.replace(/[^\p{L}\p{N}\s]/gu, "");
   return v;
@@ -99,7 +99,28 @@ export function levenshtein(a: string, b: string) {
   }
   return row[b.length];
 }
-export function checkAnswer(input: string, answer: string, mode = "ignore") {
+export const ignoreAccents = () =>
+  typeof localStorage === "undefined" ||
+  localStorage.getItem("flint-ignore-accents") !== "false";
+export const foldAccents = (value: string) =>
+  value.normalize("NFD").replace(/\p{M}/gu, "").normalize("NFC");
+export function checkAnswer(
+  input: string,
+  answer: string,
+  mode = "ignore",
+  accents = ignoreAccents(),
+) {
+  input = input.normalize("NFC");
+  answer = answer.normalize("NFC");
+  if (accents) {
+    input = foldAccents(input);
+    answer = foldAccents(answer);
+  } else if (
+    input !== answer &&
+    normalize(foldAccents(input)) === normalize(foldAccents(answer)) &&
+    normalize(input) !== normalize(answer)
+  )
+    return false;
   if (mode === "exact") return input.trim() === answer.trim();
   if (mode === "case")
     return (
@@ -116,6 +137,39 @@ export function checkAnswer(input: string, answer: string, mode = "ignore") {
   if (mode === "typo")
     return levenshtein(a, b) <= Math.max(1, Math.floor(b.length * 0.08));
   return a === b;
+}
+export type Grade = "CORRECT" | "CLOSE" | "INCORRECT";
+export function gradeAnswer(
+  input: string,
+  expected: string,
+  grading: "normal" | "strict" | "lenient" = "normal",
+  accents = ignoreAccents(),
+): Grade {
+  if (!input.trim() || !expected.trim()) return "INCORRECT";
+  const clean = (s: string) =>
+    s.normalize("NFC").replace(/[-–—]/g, " ").replace(/\s+/g, " ").trim();
+  const a =
+    grading === "strict"
+      ? input.normalize("NFC").trim()
+      : normalize(clean(input));
+  const b =
+    grading === "strict"
+      ? expected.normalize("NFC").trim()
+      : normalize(clean(expected));
+  if (a === b) return "CORRECT";
+  if (foldAccents(a) === foldAccents(b)) return accents ? "CLOSE" : "INCORRECT";
+  if (grading === "strict") return "INCORRECT";
+  const x = accents ? foldAccents(a) : a,
+    y = accents ? foldAccents(b) : b;
+  if (
+    (x.match(/\d+/g) || []).join() !== (y.match(/\d+/g) || []).join() ||
+    y.length < 5
+  )
+    return "INCORRECT";
+  return levenshtein(x, y) <=
+    Math.max(1, Math.floor(y.length * (grading === "lenient" ? 0.15 : 0.08)))
+    ? "CLOSE"
+    : "INCORRECT";
 }
 export type ParsedCard = { question: string; answer: string };
 export type ParseResult = {

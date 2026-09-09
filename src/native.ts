@@ -16,6 +16,27 @@ const nativeCard = (c: Card) => ({
   questionImage: c.questionImage || null,
   answerImage: c.answerImage || null,
 });
+export async function exportFlint(deck: Deck) {
+  if (!inTauri())
+    throw new Error(
+      "Use the Flint desktop app to export a portable .flint file. Text export is available in the browser.",
+    );
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const path = await save({
+    defaultPath: deck.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") + ".flint",
+    filters: [{ name: "Flint study set", extensions: ["flint"] }],
+  });
+  if (path)
+    await invoke("export_flint", {
+      path,
+      deck: {
+        ...normalizeCover(deck),
+        favorite: !!deck.favorite,
+        lastStudied: deck.lastStudied || null,
+        cards: deck.cards.map(nativeCard),
+      },
+    });
+}
 export async function loadNativeDecks() {
   if (!inTauri()) return null;
   const decks = await invoke<Deck[]>("list_decks");

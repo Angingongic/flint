@@ -24,7 +24,10 @@ export function makeTest(
     .slice(0, count)
     .map((card, index) => {
       const reverse =
-        direction === "terms" || (direction === "both" && index % 2 === 0);
+        direction === "terms" ||
+        (kinds[index % kinds.length] !== "matching" &&
+          direction === "both" &&
+          index % 2 === 0);
       const side = sides(card, reverse);
       let kind = kinds[index % kinds.length];
       if (!side.answer.trim() && kind === "written") kind = "choice";
@@ -54,7 +57,21 @@ export function makeTest(
         claimImage: claimed.image,
         truth: claimed.id === card.id,
       };
-    });
+    })
+    .map((question, _, all) =>
+      question.kind !== "matching"
+        ? question
+        : {
+            ...question,
+            choices: all
+              .filter((q) => q.kind === "matching")
+              .map((q) => ({
+                id: q.card.id,
+                text: q.answer,
+                image: q.answerImage,
+              })),
+          },
+    );
 }
 export function testCorrect(q: TestQuestion, value: string | undefined) {
   if (!value?.trim()) return false;

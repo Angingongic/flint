@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
+import { gradeAnswer, ignoreAccents } from "./lib";
 import { MotionPage, Toasts, notify, motion, useReducedMotion } from "./motion";
 import { SetOverview, Flashcards, WaveLearn, WorksheetTest } from "./Study";
 import {
@@ -14,7 +16,8 @@ import {
   activeSet,
   SetActions,
 } from "./LibraryView";
-import { updateDeckDetails, exportDeckText } from "./native";
+import { updateDeckDetails, exportFlint } from "./native";
+import { PortableSets } from "./PortableSet";
 import {
   Home,
   Library,
@@ -103,6 +106,7 @@ const load = () => {
   }
 };
 export function App() {
+  const [portableBusy, setPortableBusy] = useState(false);
   const [page, setPage] = useState<Page>("Home");
   const [decks, setDecks] = useState<Deck[]>(load);
   const [dark, setDark] = useState(
@@ -284,243 +288,258 @@ export function App() {
       setDecks((current) => [copy, ...current]);
       notify("Set duplicated");
     },
-    export: exportDeckText,
+    export: exportFlint,
     afterDelete: () => go("Library"),
   };
   const visibleDecks = decks.filter(activeSet);
   return (
-    <UpdateProvider blocked={page === "Create" || page === "Import" || !!studyMode}>
-    <div
-      className={"shell " + (focused ? "focus-shell" : "")}
-      style={
-        focused && studyDeck
-          ? ({
-              "--set-accent": presetFor(studyDeck).accent,
-            } as React.CSSProperties)
-          : undefined
+    <UpdateProvider
+      blocked={
+        portableBusy || page === "Create" || page === "Import" || !!studyMode
       }
     >
-      {focused && studyDeck && (
-        <div className="study-atmosphere" aria-hidden="true">
-          <SetCover deck={studyDeck} />
-        </div>
-      )}
-      <aside>
-        <div className="brand">
-          <Logo />
-          <span>Flint</span>
-        </div>
-        <nav>
-          {nav.map(([label, Icon]) => (
-            <button
-              key={label}
-              className={page === label ? "active" : ""}
-              onClick={() => {
-                if (label === "Create") setEditingDeck(null);
-                go(label);
-              }}
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-              {label === "Study" && <kbd>⌘ S</kbd>}
-            </button>
-          ))}
-        </nav>
-        <div className="side-bottom">
-          <div className="profile">
-            <span className="avatar">
-              {(displayName.trim()[0] || "F").toUpperCase()}
-            </span>
-            <span>
-              <b>{displayName || "Local profile"}</b>
-              <small>
-                {displayName ? "Stored on this device" : "No account required"}
-              </small>
-            </span>
+      <PortableSets
+        decks={decks}
+        onBusy={setPortableBusy}
+        onImported={(deck) => {
+          setDecks((old) => [deck, ...old]);
+          if (page !== "Create" && !studyMode) go("Library");
+        }}
+      />
+      <div
+        className={"shell " + (focused ? "focus-shell" : "")}
+        style={
+          focused && studyDeck
+            ? ({
+                "--set-accent": presetFor(studyDeck).accent,
+              } as React.CSSProperties)
+            : undefined
+        }
+      >
+        {focused && studyDeck && (
+          <div className="study-atmosphere" aria-hidden="true">
+            <SetCover deck={studyDeck} />
           </div>
-        </div>
-      </aside>
-      <main>
-        <header>
-          <label className="search">
-            <Search size={17} />
-            <input
-              ref={searchRef}
-              aria-label="Search sets and cards"
-              placeholder="Search sets, cards, and subjects"
-              value={query}
-              onFocus={() => {
-                if (page !== "Library") go("Library");
-              }}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <kbd>
-              <Command size={12} /> K
-            </kbd>
-          </label>
-          <div className="header-actions">
-            <button
-              className="icon"
-              aria-label={
-                dark ? "Switch to light theme" : "Switch to dark theme"
-              }
-              onClick={() => setDark(!dark)}
-            >
-              {dark ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-            <button className="study-now" onClick={() => start()}>
-              <Play size={15} fill="currentColor" /> Study now
-            </button>
+        )}
+        <aside>
+          <div className="brand">
+            <Logo />
+            <span>Flint</span>
           </div>
-        </header>
-        <section className="content">
-          <MotionPage
-            route={`${page}-${studyDeck?.id || ""}-${studyMode || ""}`}
-          >
-            {appError && (
-              <div className="hint danger" role="alert">
-                <X size={16} />
-                <span>{appError}</span>
-                <button onClick={() => setAppError("")}>Dismiss</button>
-              </div>
-            )}
-            {page === "Home" && (
-              <Dashboard decks={visibleDecks} start={start} go={go} />
-            )}{" "}
-            {page === "Library" && (
-              <LibraryView
-                decks={decks}
-                start={start}
-                globalQuery={query}
-                create={() => {
-                  setEditingDeck(null);
-                  go("Create");
+          <nav>
+            {nav.map(([label, Icon]) => (
+              <button
+                key={label}
+                className={page === label ? "active" : ""}
+                onClick={() => {
+                  if (label === "Create") setEditingDeck(null);
+                  go(label);
                 }}
-                actions={setActions}
+              >
+                <Icon size={18} />
+                <span>{label}</span>
+                {label === "Study" && <kbd>⌘ S</kbd>}
+              </button>
+            ))}
+          </nav>
+          <div className="side-bottom">
+            <div className="profile">
+              <span className="avatar">
+                {(displayName.trim()[0] || "F").toUpperCase()}
+              </span>
+              <span>
+                <b>{displayName || "Local profile"}</b>
+                <small>
+                  {displayName
+                    ? "Stored on this device"
+                    : "No account required"}
+                </small>
+              </span>
+            </div>
+          </div>
+        </aside>
+        <main>
+          <header>
+            <label className="search">
+              <Search size={17} />
+              <input
+                ref={searchRef}
+                aria-label="Search sets and cards"
+                placeholder="Search sets, cards, and subjects"
+                value={query}
+                onFocus={() => {
+                  if (page !== "Library") go("Library");
+                }}
+                onChange={(event) => setQuery(event.target.value)}
               />
-            )}{" "}
-            {page === "Study" &&
-              (studyDeck ? (
-                studyMode === null ? (
-                  <SetOverview
-                    deck={studyDeck}
-                    start={(mode) => start(studyDeck, mode)}
-                    edit={() => {
-                      setEditingDeck(studyDeck);
-                      go("Create");
-                    }}
-                    actions={setActions}
-                    back={() => go("Library")}
-                  />
-                ) : studyMode === "flashcards" ? (
-                  <Flashcards deck={studyDeck} done={backToSet} />
-                ) : studyMode === "learn" ? (
-                  <WaveLearn
-                    key={(practiceDeck || studyDeck).cards
-                      .map((c) => c.id)
-                      .join()}
-                    deck={practiceDeck || studyDeck}
-                    done={backToSet}
-                  />
-                ) : studyMode === "test" ? (
-                  <WorksheetTest
-                    deck={studyDeck}
-                    done={backToSet}
-                    studyMissed={(subset) => {
-                      setPracticeDeck(subset);
-                      window.history.replaceState(
-                        null,
-                        "",
-                        "#Study/" + encodeURIComponent(studyDeck.id),
-                      );
-                      start(studyDeck, "learn");
-                    }}
-                  />
-                ) : (
-                  <TypedSession
-                    key={studyMode}
-                    strict={studyMode === "word"}
-                    deck={
-                      studyMode === "due"
-                        ? {
-                            ...studyDeck,
-                            cards: studyDeck.cards.filter(
-                              (c) =>
-                                !c.dueAt || new Date(c.dueAt) <= new Date(),
-                            ),
-                          }
-                        : studyMode === "weak"
+              <kbd>
+                <Command size={12} /> K
+              </kbd>
+            </label>
+            <div className="header-actions">
+              <button
+                className="icon"
+                aria-label={
+                  dark ? "Switch to light theme" : "Switch to dark theme"
+                }
+                onClick={() => setDark(!dark)}
+              >
+                {dark ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <button className="study-now" onClick={() => start()}>
+                <Play size={15} fill="currentColor" /> Study now
+              </button>
+            </div>
+          </header>
+          <section className="content">
+            <MotionPage
+              route={`${page}-${studyDeck?.id || ""}-${studyMode || ""}`}
+            >
+              {appError && (
+                <div className="hint danger" role="alert">
+                  <X size={16} />
+                  <span>{appError}</span>
+                  <button onClick={() => setAppError("")}>Dismiss</button>
+                </div>
+              )}
+              {page === "Home" && (
+                <Dashboard decks={visibleDecks} start={start} go={go} />
+              )}{" "}
+              {page === "Library" && (
+                <LibraryView
+                  decks={decks}
+                  start={start}
+                  globalQuery={query}
+                  create={() => {
+                    setEditingDeck(null);
+                    go("Create");
+                  }}
+                  actions={setActions}
+                />
+              )}{" "}
+              {page === "Study" &&
+                (studyDeck ? (
+                  studyMode === null ? (
+                    <SetOverview
+                      deck={studyDeck}
+                      start={(mode) => start(studyDeck, mode)}
+                      edit={() => {
+                        setEditingDeck(studyDeck);
+                        go("Create");
+                      }}
+                      actions={setActions}
+                      back={() => go("Library")}
+                    />
+                  ) : studyMode === "flashcards" ? (
+                    <Flashcards deck={studyDeck} done={backToSet} />
+                  ) : studyMode === "learn" ? (
+                    <WaveLearn
+                      key={(practiceDeck || studyDeck).cards
+                        .map((c) => c.id)
+                        .join()}
+                      deck={practiceDeck || studyDeck}
+                      done={backToSet}
+                    />
+                  ) : studyMode === "test" ? (
+                    <WorksheetTest
+                      deck={studyDeck}
+                      done={backToSet}
+                      studyMissed={(subset) => {
+                        setPracticeDeck(subset);
+                        window.history.replaceState(
+                          null,
+                          "",
+                          "#Study/" + encodeURIComponent(studyDeck.id),
+                        );
+                        start(studyDeck, "learn");
+                      }}
+                    />
+                  ) : (
+                    <TypedSession
+                      key={studyMode}
+                      strict={studyMode === "word"}
+                      deck={
+                        studyMode === "due"
                           ? {
                               ...studyDeck,
                               cards: studyDeck.cards.filter(
                                 (c) =>
-                                  (c.lapses || 0) > 0 ||
-                                  ((c.repetitions || 0) > 0 && c.accuracy < 70),
+                                  !c.dueAt || new Date(c.dueAt) <= new Date(),
                               ),
                             }
-                          : studyDeck
-                    }
-                    done={backToSet}
-                  />
-                )
-              ) : (
-                <StudyHub decks={visibleDecks} start={start} go={go} />
-              ))}{" "}
-            {page === "Import" && (
-              <ImportPage
-                onImport={async (d) => {
-                  d = normalizeCover({
-                    ...d,
-                    coverImage:
-                      d.coverImage || freshCover(d.id, visibleDecks[0]),
-                    createdAt: new Date().toISOString(),
-                  });
-                  await saveNativeDeck(d, "import");
-                  const saved = (await loadNativeDecks()) || [
-                    d,
-                    ...decks.filter((deck) => deck.id !== d.id),
-                  ];
-                  setDecks(saved);
-                  notify("Cards imported");
-                  go("Library");
-                }}
-              />
-            )}{" "}
-            {page === "Create" && (
-              <CreatePage
-                key={editingDeck?.id || "new"}
-                initialDeck={editingDeck}
-                onCreate={async (d) => {
-                  d = normalizeCover({
-                    ...d,
-                    createdAt: d.createdAt || new Date().toISOString(),
-                  });
-                  await saveNativeDeck(d);
-                  const saved = (await loadNativeDecks()) || [
-                    d,
-                    ...decks.filter((deck) => deck.id !== d.id),
-                  ];
-                  setDecks(saved);
-                  setEditingDeck(null);
-                  notify(editingDeck ? "Changes saved" : "Set created");
-                  go("Library");
-                }}
-              />
-            )}{" "}
-            {page === "Statistics" && <Stats decks={visibleDecks} />}{" "}
-            {page === "Settings" && (
-              <SettingsPage
-                dark={dark}
-                setDark={setDark}
-                displayName={displayName}
-                setDisplayName={setDisplayName}
-              />
-            )}
-          </MotionPage>
-        </section>
-        <Toasts />
-      </main>
-    </div>
+                          : studyMode === "weak"
+                            ? {
+                                ...studyDeck,
+                                cards: studyDeck.cards.filter(
+                                  (c) =>
+                                    (c.lapses || 0) > 0 ||
+                                    ((c.repetitions || 0) > 0 &&
+                                      c.accuracy < 70),
+                                ),
+                              }
+                            : studyDeck
+                      }
+                      done={backToSet}
+                    />
+                  )
+                ) : (
+                  <StudyHub decks={visibleDecks} start={start} go={go} />
+                ))}{" "}
+              {page === "Import" && (
+                <ImportPage
+                  onImport={async (d) => {
+                    d = normalizeCover({
+                      ...d,
+                      coverImage:
+                        d.coverImage || freshCover(d.id, visibleDecks[0]),
+                      createdAt: new Date().toISOString(),
+                    });
+                    await saveNativeDeck(d, "import");
+                    const saved = (await loadNativeDecks()) || [
+                      d,
+                      ...decks.filter((deck) => deck.id !== d.id),
+                    ];
+                    setDecks(saved);
+                    notify("Cards imported");
+                    go("Library");
+                  }}
+                />
+              )}{" "}
+              {page === "Create" && (
+                <CreatePage
+                  key={editingDeck?.id || "new"}
+                  initialDeck={editingDeck}
+                  onCreate={async (d) => {
+                    d = normalizeCover({
+                      ...d,
+                      createdAt: d.createdAt || new Date().toISOString(),
+                    });
+                    await saveNativeDeck(d);
+                    const saved = (await loadNativeDecks()) || [
+                      d,
+                      ...decks.filter((deck) => deck.id !== d.id),
+                    ];
+                    setDecks(saved);
+                    setEditingDeck(null);
+                    notify(editingDeck ? "Changes saved" : "Set created");
+                    go("Library");
+                  }}
+                />
+              )}{" "}
+              {page === "Statistics" && <Stats decks={visibleDecks} />}{" "}
+              {page === "Settings" && (
+                <SettingsPage
+                  dark={dark}
+                  setDark={setDark}
+                  displayName={displayName}
+                  setDisplayName={setDisplayName}
+                />
+              )}
+            </MotionPage>
+          </section>
+          <Toasts />
+        </main>
+      </div>
     </UpdateProvider>
   );
 }
@@ -803,13 +822,17 @@ function TypedSession({
     [started, setStarted] = useState(Date.now()),
     [error, setError] = useState("");
   const card = deck.cards[i];
-  const matching = localStorage.getItem("flint-matching") || "Flexible";
-  const matchMode =
-    strict || matching === "Exact"
-      ? "exact"
-      : matching === "Minor typo tolerance"
-        ? "typo"
-        : "ignore";
+  const result = card
+    ? gradeAnswer(
+        typed,
+        card.answer,
+        strict || localStorage.getItem("flint-matching") === "Exact"
+          ? "strict"
+          : localStorage.getItem("flint-matching") === "Minor typo tolerance"
+            ? "lenient"
+            : "normal",
+      )
+    : "INCORRECT";
   const next = (rating: string) => {
     reviewNative(card, rating, !!checked, Date.now() - started, typed).catch(
       (reason) => setError(`Review couldn't be saved: ${String(reason)}`),
@@ -875,14 +898,15 @@ function TypedSession({
         <h1>{card.question}</h1>
         {!revealed ? (
           <>
-            <input
+            <AnswerInput
+              cards={deck.cards}
               autoFocus
               placeholder="Type your answer…"
               value={typed}
-              onChange={(e) => setTyped(e.target.value)}
+              onValue={setTyped}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  setChecked(checkAnswer(typed, card.answer, matchMode));
+                  setChecked(result !== "INCORRECT");
                   setRevealed(true);
                 }
               }}
@@ -890,7 +914,7 @@ function TypedSession({
             <button
               className="primary wide"
               onClick={() => {
-                setChecked(checkAnswer(typed, card.answer, matchMode));
+                setChecked(result !== "INCORRECT");
                 setRevealed(true);
               }}
             >
@@ -901,7 +925,14 @@ function TypedSession({
           <div className={"answer " + (checked ? "correct" : "incorrect")}>
             <span>{checked ? <Check /> : <X />}</span>
             <div>
-              <small>{checked ? "CORRECT" : "EXPECTED ANSWER"}</small>
+              <small>
+                {checked
+                  ? result === "CLOSE"
+                    ? "✓ Close enough"
+                    : "CORRECT"
+                  : "EXPECTED ANSWER"}
+              </small>
+              {result === "CLOSE" && <CanonicalAnswer answer={card.answer} />}
               <h2>{card.answer}</h2>
               <ManagedImage name={card.answerImage} alt="Answer visual" />
               {!checked && (
@@ -997,6 +1028,14 @@ function ImportPage({ onImport }: { onImport: (d: Deck) => Promise<void> }) {
             until you confirm.
           </p>
         </div>
+        <button
+          className="secondary"
+          disabled={!inTauri()}
+          title={!inTauri() ? "Available in the desktop app" : undefined}
+          onClick={() => window.dispatchEvent(new Event("flint-import"))}
+        >
+          Import .flint set
+        </button>
         <button className="primary" onClick={choose}>
           <Upload size={16} /> Choose PDF, DOCX, or TXT
         </button>
@@ -1811,6 +1850,7 @@ function SettingsPage({
   displayName: string;
   setDisplayName: (x: string) => void;
 }) {
+  const [accents, setAccents] = useState(ignoreAccents);
   const [matching, setMatching] = useState(
     localStorage.getItem("flint-matching") || "Flexible",
   );
@@ -1872,6 +1912,23 @@ function SettingsPage({
             <option>Exact</option>
             <option>Minor typo tolerance</option>
           </select>
+        </div>
+        <div className="panel setting">
+          <label>
+            <b>Ignore accents</b>
+            <p>Accept diacritic differences independently of typo tolerance.</p>
+            <input
+              type="checkbox"
+              checked={accents}
+              onChange={(e) => {
+                setAccents(e.target.checked);
+                localStorage.setItem(
+                  "flint-ignore-accents",
+                  String(e.target.checked),
+                );
+              }}
+            />
+          </label>
         </div>
         <UpdateSettings />
         <BackupSettings />

@@ -24,6 +24,7 @@ vi.mock("./native", () => ({
   saveNativeDeck: vi.fn(async () => {}),
   updateDeckDetails: vi.fn(async () => {}),
   exportDeckText: vi.fn(async () => {}),
+  exportFlint: vi.fn(async () => {}),
   reviewNative: vi.fn(async () => {}),
   mediaUrl: vi.fn(async (name: string) => name || ""),
   saveMediaBytes: vi.fn(),
@@ -161,7 +162,8 @@ describe("study interactions", () => {
         .getAttribute("aria-pressed"),
     ).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Go to question 4" }));
-    expect(document.activeElement?.tagName).toBe("SELECT");
+    expect(document.activeElement?.tagName).toBe("BUTTON");
+    expect(document.activeElement?.closest(".matching-board")).toBeTruthy();
     const first = document.querySelector<HTMLElement>(".worksheet-question")!;
     fireEvent.click(within(first).getAllByRole("radio")[0]);
     expect(within(first).queryByText(/Your answer:/)).toBeNull();
@@ -274,7 +276,8 @@ describe("study interactions", () => {
     await waitFor(() =>
       expect(
         within(screen.getAllByLabelText("question image attachment")[0])
-          .getByRole("img").getAttribute("src"),
+          .getByRole("img")
+          .getAttribute("src"),
       ).toMatch(/^data:image\/webp/),
     );
     const firstAnswer = screen.getAllByLabelText("answer image attachment")[0];
@@ -307,10 +310,16 @@ describe("study interactions", () => {
       ),
     );
     await waitFor(() => {
-      expect(within(screen.getByLabelText("cover image attachment"))
-        .getByRole("img").getAttribute("src")).toMatch(/^data:image\/png/);
-      expect(within(screen.getAllByLabelText("question image attachment")[0])
-        .getByRole("img").getAttribute("src")).toMatch(/^data:image\/webp/);
+      expect(
+        within(screen.getByLabelText("cover image attachment"))
+          .getByRole("img")
+          .getAttribute("src"),
+      ).toMatch(/^data:image\/png/);
+      expect(
+        within(screen.getAllByLabelText("question image attachment")[0])
+          .getByRole("img")
+          .getAttribute("src"),
+      ).toMatch(/^data:image\/webp/);
     });
   });
   it("opens a set overview and every mode exits to the same set", async () => {

@@ -1,4 +1,4 @@
-import { Card, checkAnswer, normalize, levenshtein } from "./lib";
+import { Card, gradeAnswer } from "./lib";
 
 export type Question = {
   cardId: string;
@@ -22,6 +22,7 @@ export type WaveState = {
   mistakes: Record<string, number>;
   checkpoint: boolean;
   rounds: number;
+  didntKnow?: Record<string, number>;
 };
 export const defaultOptions: LearnOptions = {
   waveSize: 4,
@@ -64,44 +65,58 @@ export function grade(
   expected: string,
   grading: LearnOptions["grading"] = "normal",
 ): "CORRECT" | "CLOSE" | "INCORRECT" {
-  if (!input.trim() || !expected.trim()) return "INCORRECT";
-  if (grading === "strict")
-    return checkAnswer(input, expected, "exact") ? "CORRECT" : "INCORRECT";
-  const clean = (s: string) =>
-    s.replace(/[-–—]/g, " ").replace(/\s+/g, " ").trim();
-  if (checkAnswer(clean(input), clean(expected), "ignore")) return "CORRECT";
-  if (
-    (input.match(/\d+/g) || []).join() !== (expected.match(/\d+/g) || []).join()
-  )
-    return "INCORRECT";
-  if (normalize(expected).length < 5) return "INCORRECT";
-  if (grading === "lenient")
-    return levenshtein(normalize(clean(input)), normalize(clean(expected))) <=
-      Math.max(1, Math.floor(normalize(expected).length * 0.15))
-      ? "CLOSE"
-      : "INCORRECT";
-  return checkAnswer(clean(input), clean(expected), "typo")
-    ? "CLOSE"
-    : "INCORRECT";
+  return gradeAnswer(input, expected, grading);
 }
-export function answerLearn(state: WaveState, correct: boolean): WaveState {
+export function answerLearn(
+  state: WaveState,
+  outcome: boolean | "DIDNT_KNOW",
+): WaveState {
   const question = state.queue[0];
   if (!question) return state;
+  const correct = outcome === true;
+  const didntKnow = { ...state.didntKnow };
+  if (outcome === "DIDNT_KNOW")
+    didntKnow[question.cardId] = (didntKnow[question.cardId] || 0) + 1;
   const mastery = { ...state.mastery },
     mistakes = { ...state.mistakes };
   mastery[question.cardId] = correct
     ? question.kind === "typed"
       ? "Mastered"
       : "Familiar"
-    : "Learning";
+    : outcome === "DIDNT_KNOW" && mastery[question.cardId] === "New"
+      ? "New"
+      : "Learning";
   if (!correct)
-    mistakes[question.cardId] = (mistakes[question.cardId] || 0) + 1;
+    mistakes[question.cardId] =
+      (mistakes[question.cardId] || 0) + (outcome === "DIDNT_KNOW" ? 2 : 1);
   const queue = state.queue.slice(1);
-  return { ...state, queue, mastery, mistakes, checkpoint: queue.length === 0 };
+  // A skipped recognition must be recognized again before its typed recall.
+  if (outcome === "DIDNT_KNOW" && question.kind === "choice") {
+    const typed = queue.findIndex(
+      (q) => q.cardId === question.cardId && q.kind === "typed",
+    );
+    if (typed >= 0) queue.splice(typed, 1);
+  }
+  return {
+    ...state,
+    queue,
+    mastery,
+    mistakes,
+    didntKnow,
+    checkpoint: queue.length === 0,
+  };
 }
+export const learnComplete = (state: WaveState) =>
+  !state.queue.length &&
+  state.introduced >= state.ids.length &&
+  (state.wave.length === 0 ||
+    state.ids.every((id) => state.mastery[id] === "Mastered"));
 export function continueWave(state: WaveState): WaveState {
   // Reinforce only concepts still weak; recognized concepts must pass recall.
-  const weak = state.wave.filter((id) => state.mastery[id] !== "Mastered");
+  const weak = state.wave.filter(
+    (id) =>
+      state.mastery[id] !== "Mastered" && (state.didntKnow?.[id] || 0) < 3,
+  );
   const wave = weak.length
     ? weak
     : state.ids.slice(

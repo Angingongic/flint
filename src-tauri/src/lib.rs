@@ -8,7 +8,28 @@ use std::{
     path::{Path, PathBuf},
     sync::Mutex,
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
+mod portable;
+use portable::{cancel_flint, export_flint, import_flint, preview_flint, PendingSet};
+struct OpenedSets(Mutex<Vec<String>>);
+fn queue_sets(app: &tauri::AppHandle, paths: Vec<String>) {
+    if let Ok(mut pending) = app.state::<OpenedSets>().0.lock() {
+        pending.extend(
+            paths
+                .into_iter()
+                .filter(|p| p.to_ascii_lowercase().ends_with(".flint"))
+                .take(20),
+        );
+        pending.truncate(20);
+    }
+    let _ = app.emit("flint-opened", ());
+}
+#[tauri::command]
+fn opened_sets(state: State<OpenedSets>) -> Result<Vec<String>, String> {
+    Ok(std::mem::take(
+        &mut *state.0.lock().map_err(|e| e.to_string())?,
+    ))
+}
 use uuid::Uuid;
 
 const SCHEMA_VERSION: i64 = 5;
@@ -171,7 +192,7 @@ pub fn schedule_review(old: &Schedule, rating: &str, now: DateTime<Utc>) -> Sche
     let mut s = old.clone();
     s.repetitions += 1;
     match rating.to_lowercase().as_str() {
-        "again" => {
+        "again" | "didn't know" => {
             s.state = "Learning".into();
             s.interval_days = 0.007;
             s.ease = (s.ease - 0.2).max(1.3);
@@ -318,7 +339,7 @@ fn export_text(path: String, text: String) -> Result<(), String> {
 fn persist_deck(c: &mut Connection, deck: &Deck, source: Option<&str>) -> Result<(), String> {
     let tx = c.transaction().map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
-    tx.execute("INSERT INTO decks(id,title,subject,color,favorite,last_studied,cover_image,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,subject=excluded.subject,color=excluded.color,favorite=excluded.favorite,last_studied=excluded.last_studied,cover_image=excluded.cover_image,modified_at=excluded.modified_at",params![deck.id,deck.title,deck.subject,deck.color,deck.favorite,deck.last_studied,deck.cover_image,now,now]).map_err(|e|e.to_string())?;
+    tx.execute("INSERT INTO decks(id,title,subject,color,favorite,last_studied,cover_image,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,subject=excluded.subject,color=excluded.color,favorite=excluded.favorite,last_studied=excluded.last_studied,cover_image=excluded.cover_image,modified_at=excluded.modified_at",params![deck.id,deck.title,deck.subject,deck.color,deck.favorite,deck.last_studied,deck.cover_image,deck.created_at.as_deref().unwrap_or(&now),now]).map_err(|e|e.to_string())?;
     tx.execute(
         "UPDATE decks SET metadata=? WHERE id=?",
         params![deck.meta.to_string(), deck.id],
@@ -661,7 +682,31 @@ fn record_test_attempt(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(OpenedSets(Mutex::new(Vec::new())))
+        .manage(PendingSet::default())
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            queue_sets(
+                app,
+                args.into_iter()
+                    .skip(1)
+                    .map(|p| {
+                        let path = PathBuf::from(p);
+                        if path.is_absolute() {
+                            path
+                        } else {
+                            Path::new(&cwd).join(path)
+                        }
+                    })
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect(),
+            );
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .setup(|app| {
+            queue_sets(app.handle(), std::env::args().skip(1).collect());
             let dir = app.path().app_data_dir()?;
             fs::create_dir_all(&dir)?;
             let path = dir.join("flint.sqlite3");
@@ -694,10 +739,27 @@ pub fn run() {
             media_path,
             save_study_session,
             load_study_session,
-            record_test_attempt
+            record_test_attempt,
+            export_flint,
+            preview_flint,
+            import_flint,
+            cancel_flint,
+            opened_sets
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running Flint")
+        .run(|_app, _event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = _event {
+                queue_sets(
+                    _app,
+                    urls.into_iter()
+                        .filter_map(|url| url.to_file_path().ok())
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect(),
+                );
+            }
+        });
 }
 
 #[cfg(test)]
@@ -718,6 +780,10 @@ mod tests {
     fn ratings() {
         let n = Utc::now();
         assert_eq!(schedule_review(&fresh(), "Again", n).state, "Learning");
+        let skipped = schedule_review(&fresh(), "Didn't Know", n);
+        assert_eq!(skipped.state, "Learning");
+        assert_eq!(skipped.lapses, 1);
+        assert!(skipped.interval_days < 1.0);
         assert_eq!(schedule_review(&fresh(), "Hard", n).interval_days, 0.25);
         assert_eq!(schedule_review(&fresh(), "Good", n).interval_days, 1.0);
         assert_eq!(schedule_review(&fresh(), "Easy", n).interval_days, 4.0)

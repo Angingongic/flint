@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Deck } from "./lib";
+import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
 import {
   mediaUrl,
   loadStudySession,
@@ -12,6 +13,7 @@ import {
   LearnOptions,
   defaultOptions,
   beginLearn,
+  learnComplete,
   answerLearn,
   continueWave,
   grade,
@@ -493,7 +495,7 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
     choices: string[];
     user: string;
     selected?: string;
-    result: "CORRECT" | "CLOSE" | "INCORRECT";
+    result: "CORRECT" | "CLOSE" | "INCORRECT" | "DIDNT_KNOW";
     saved: boolean;
   } | null>(null);
   const [phase, setPhase] = useState(false);
@@ -509,12 +511,18 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
   const sessionKey = "learn-waves-v1-" + deck.cards.map((c) => c.id).join("_");
   useEffect(() => {
     loadStudySession<WaveState>(deck.id, sessionKey)
-      .then((saved) => {
+      .then(async (saved) => {
         if (
           saved?.version === 1 &&
           saved.ids.join() === deck.cards.map((c) => c.id).join()
         ) {
-          setState(saved);
+          if (learnComplete(saved)) {
+            await saveStudySession(
+              deck.id,
+              sessionKey + "-history-" + crypto.randomUUID(),
+              saved,
+            );
+          } else setState(saved);
           setOptions(saved.options);
         }
         setLoaded(true);
@@ -574,7 +582,12 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
     );
   };
   useEffect(() => {
-    if (!response?.saved) return;
+    if (
+      !response?.saved ||
+      response.result === "DIDNT_KNOW" ||
+      response.result === "CLOSE"
+    )
+      return;
     const timer = setTimeout(
       dismissFeedback,
       response.result === "INCORRECT" ? motion.incorrect : motion.accepted,
@@ -588,6 +601,11 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
   }, [phase]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (response?.saved && e.key === "Enter") {
+        e.preventDefault();
+        dismissFeedback();
+        return;
+      }
       if (
         !response &&
         !phase &&
@@ -628,6 +646,7 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
     value: string,
     selectedId?: string,
     visualRecall?: boolean,
+    didntKnow = false,
   ) => {
     if (
       !state ||
@@ -642,13 +661,15 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
       return;
     if (
       question.kind === "typed" &&
+      !didntKnow &&
       visualRecall === undefined &&
       !value.trim()
     )
       return;
     lock.current = true;
-    const result =
-      visualRecall !== undefined
+    const result = didntKnow
+      ? "DIDNT_KNOW"
+      : visualRecall !== undefined
         ? visualRecall
           ? "CORRECT"
           : "INCORRECT"
@@ -657,24 +678,36 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
             ? "CORRECT"
             : "INCORRECT"
           : grade(value, side.answer, options.grading);
-    const ok = result !== "INCORRECT";
+    const ok = result === "CORRECT" || result === "CLOSE";
     const display = {
       question,
       card,
       choices: [...choices.current],
       user: value,
       selected: selectedId,
-      result: result as "CORRECT" | "CLOSE" | "INCORRECT",
+      result: result as "CORRECT" | "CLOSE" | "INCORRECT" | "DIDNT_KNOW",
       saved: false,
     };
     setResponse(display);
     setFeedback(
-      result === "CLOSE" ? "Close enough" : ok ? "Correct" : "Not quite",
+      didntKnow
+        ? "Didn't know — let's learn it"
+        : result === "CLOSE"
+          ? "Close enough"
+          : ok
+            ? "Correct"
+            : "Not quite",
     );
-    if (await commit(answerLearn(state, ok))) {
+    if (await commit(answerLearn(state, didntKnow ? "DIDNT_KNOW" : ok))) {
       setResponse({ ...display, saved: true });
       try {
-        await reviewNative(card, ok ? "Good" : "Again", ok, 0, value);
+        await reviewNative(
+          card,
+          didntKnow ? "Didn't Know" : ok ? "Good" : "Again",
+          ok,
+          0,
+          value,
+        );
       } catch {
         setError(
           "Learn progress saved, but the review history could not be updated.",
@@ -862,8 +895,12 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
               </div>
             ) : !question && !response ? (
               <div className="checkpoint">
-                <h1>Set learned</h1>
-                <p>Every term passed typed recall.</p>
+                <h1>Session complete</h1>
+                <p>
+                  {state.ids.every((id) => state.mastery[id] === "Mastered")
+                    ? "Every term passed typed recall."
+                    : "You've practiced this set. Some terms need more work — come back for a fresh session."}
+                </p>
                 <Back done={done} />
               </div>
             ) : (
@@ -876,7 +913,8 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                   className={
                     "learn-question " +
                     (response
-                      ? response.result === "INCORRECT"
+                      ? response.result === "INCORRECT" ||
+                        response.result === "DIDNT_KNOW"
                         ? "answer-wrong"
                         : "answer-correct"
                       : "")
@@ -936,14 +974,15 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                         void answer(user);
                       }}
                     >
-                      <input
+                      <AnswerInput
+                        cards={deck.cards}
                         autoFocus
                         readOnly={!!response}
                         key={signature}
                         aria-label="Your answer"
                         placeholder="Type your answer"
                         value={user}
-                        onChange={(e) => setUser(e.target.value)}
+                        onValue={setUser}
                       />
                       <button
                         className="primary"
@@ -990,21 +1029,54 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                       </details>
                     </div>
                   )}
+                  {!response && (
+                    <button
+                      className="secondary"
+                      disabled={saving}
+                      onClick={() => answer("", undefined, undefined, true)}
+                    >
+                      I don't know
+                    </button>
+                  )}
                   <DeferredLoading busy={saving} label="Saving progress" />
                   {response && (
                     <div
                       className={
                         "answer-feedback " +
-                        (response.result === "INCORRECT" ? "wrong" : "")
+                        (response.result === "INCORRECT" ||
+                        response.result === "DIDNT_KNOW"
+                          ? "wrong"
+                          : "")
                       }
                       role="status"
                     >
                       <strong>
                         <span className="feedback-icon" aria-hidden="true">
-                          {response.result === "INCORRECT" ? "✕" : "✓"}
+                          {response.result === "DIDNT_KNOW"
+                            ? "↻"
+                            : response.result === "INCORRECT"
+                              ? "✕"
+                              : "✓"}
                         </span>
                         {feedback}
                       </strong>
+                      {response.result === "CLOSE" && (
+                        <CanonicalAnswer answer={side.answer} />
+                      )}
+                      {response.result === "DIDNT_KNOW" && (
+                        <>
+                          <CanonicalAnswer answer={side.answer} />
+                          <StudyImage
+                            name={side.answerImage}
+                            alt="Correct answer visual"
+                          />
+                          <p>
+                            We'll practice recognition before recall. After
+                            three skips, take a break and revisit this term in a
+                            fresh session.
+                          </p>
+                        </>
+                      )}
                       {response.result === "INCORRECT" && (
                         <>
                           <p>Your answer: {response.user || "Image choice"}</p>
@@ -1018,7 +1090,8 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                           <small>You'll see this one again.</small>
                         </>
                       )}
-                      {response.result !== "INCORRECT" &&
+                      {(response.result === "CORRECT" ||
+                        response.result === "CLOSE") &&
                         question.kind === "typed" && (
                           <small className="learned-tag">✓ Learned</small>
                         )}

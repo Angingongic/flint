@@ -1,7 +1,14 @@
-# Flint 0.1.2
+# Flint 0.1.3
 
-- Check for updates automatically or from Settings without interrupting your study.
-- Download signed updates with progress and restart only when ready.
-- Preserve a recovery backup of your library, images and preferences before installation.
+- Add a persisted Ignore accents preference and Unicode-aware grading across written study modes.
+- Show the canonical answer when accepting a close-enough response.
+- Add automatically detected character palettes with caret-aware insertion to written answers.
+- Add a distinct I don't know action in Learn, with bounded recognition/recall reinforcement.
+- Start fresh Learn sessions after completion while retaining study history and card statistics.
 
-Mac downloads support Apple Silicon and Intel. They are ad-hoc signed and not notarized; Gatekeeper warnings may appear. Windows installers are not publisher-signed and may show SmartScreen warnings.
+- Share individual sets as versioned .flint files with cards, covers, tags, starred cards, and images. Preview imports before adding a separate copy; existing sets are never overwritten.
+- Replace Test matching dropdowns with shuffled, keyboard-accessible pairing columns and per-pair results.
+
+No database migration or updater redesign is included. Full-library .flintbackup files and text export remain available.
+
+macOS builds remain ad-hoc signed and not notarized. Windows installers remain without publisher signing; Gatekeeper/SmartScreen warnings may appear.

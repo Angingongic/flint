@@ -17,6 +17,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { Deck } from "./lib";
+import { exportDeckText } from "./native";
 import { SetCover } from "./covers";
 import { Modal } from "./ui";
 import { Progress, notify } from "./motion";
@@ -119,6 +120,13 @@ export function DeckMenu({
           <button
             disabled={busy}
             onClick={() => run(() => actions.export(deck))}
+          >
+            <Download />
+            Export .flint set
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => run(() => exportDeckText(deck))}
           >
             <Download />
             Export text

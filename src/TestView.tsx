@@ -1,10 +1,8 @@
-import { useRef, useState } from "react";
-import {
-  Flag,
-  Check,
-  ClipboardCheck,
-  RotateCcw,
-} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Matching } from "./Matching";
+import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
+import { gradeAnswer } from "./lib";
+import { Flag, Check, ClipboardCheck, RotateCcw } from "lucide-react";
 import type { Deck } from "./lib";
 import {
   makeTest,
@@ -46,15 +44,44 @@ export function TestView({
     scoreRef = useRef<HTMLDivElement>(null),
     reduced = useReducedMotion();
   const missing = questions?.filter((q) => !answers[q.card.id]?.trim()) || [];
+  const matches = useMemo(
+    () => questions?.filter((q) => q.kind === "matching") || [],
+    [questions],
+  );
+  const matchLeft = useMemo(
+    () =>
+      matches.map((q) => ({
+        id: q.card.id,
+        text: q.prompt,
+        image: q.promptImage,
+      })),
+    [matches],
+  );
+  const matchRight = useMemo(
+    () =>
+      matches.map((q) => ({
+        id: q.card.id,
+        text: q.answer,
+        image: q.answerImage,
+      })),
+    [matches],
+  );
+  const matchingRef = useRef<HTMLDivElement>(null);
   const correct =
     questions?.filter((q) => testCorrect(q, answers[q.card.id])) || [];
   const jump = (id: string) => {
-    const el = refs.current[id];
+    const el =
+      !submitted && matches.some((q) => q.card.id === id)
+        ? matchingRef.current
+        : refs.current[id];
     el?.scrollIntoView({
       behavior: reduced ? "auto" : "smooth",
       block: "center",
     });
-    (el?.querySelector("input,select") as HTMLElement | null)?.focus({
+    (
+      (el?.querySelector("input,select") ||
+        el?.querySelector("button")) as HTMLElement | null
+    )?.focus({
       preventScroll: true,
     });
     setCurrent(id);
@@ -283,10 +310,40 @@ export function TestView({
           )}
           <div className="exam-layout">
             <div className="exam-document">
+              {!!matches.length && (
+                <div ref={matchingRef}>
+                  <Matching
+                    left={matchLeft}
+                    right={matchRight}
+                    termFirst={direction !== "terms"}
+                    pairs={Object.fromEntries(
+                      matches
+                        .filter((q) => answers[q.card.id])
+                        .map((q) => [q.card.id, answers[q.card.id]]),
+                    )}
+                    disabled={submitted || saving}
+                    reveal={submitted || instant}
+                    onChange={(pairs) =>
+                      setAnswers((old) => ({
+                        ...Object.fromEntries(
+                          Object.entries(old).filter(
+                            ([id]) => !matches.some((q) => q.card.id === id),
+                          ),
+                        ),
+                        ...pairs,
+                      }))
+                    }
+                  />
+                </div>
+              )}
               {questions.map((q, index) => {
                 const id = q.card.id,
-                  show = submitted || checked.includes(id),
+                  show =
+                    submitted ||
+                    checked.includes(id) ||
+                    (instant && q.kind === "matching" && !!answers[id]),
                   ok = testCorrect(q, answers[id]);
+                if (q.kind === "matching" && !show) return null;
                 return (
                   <article
                     className="worksheet-question"
@@ -327,43 +384,27 @@ export function TestView({
                       <h2>{q.prompt}</h2>
                       <StudyImage name={q.promptImage} alt="Question visual" />
                       {q.kind === "written" ? (
-                        <input
+                        <AnswerInput
+                          cards={deck.cards}
                           aria-label={"Answer " + (index + 1)}
                           disabled={show || saving}
                           placeholder="Type your answer"
                           value={answers[id] || ""}
-                          onChange={(e) => update(id, e.target.value)}
+                          onValue={(value) => update(id, value)}
                         />
                       ) : q.kind === "matching" ? (
-                        <label className="match-answer">
-                          Match this term
-                          <select
-                            aria-label={"Answer " + (index + 1)}
-                            disabled={show || saving}
-                            value={answers[id] || ""}
-                            onChange={(e) => update(id, e.target.value)}
-                          >
-                            <option value="">Choose a match</option>
-                            {q.choices.map((c, j) => (
-                              <option value={c.id} key={c.id}>
-                                {c.text || "Image " + (j + 1)}
-                              </option>
-                            ))}
-                          </select>
-                          {q.choices.some((c) => c.image) && (
-                            <div className="match-visuals">
-                              {q.choices.map((c, j) => (
-                                <div key={c.id}>
-                                  <small>{c.text || "Image " + (j + 1)}</small>
-                                  <StudyImage
-                                    name={c.image}
-                                    alt={"Match " + (j + 1)}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </label>
+                        <div>
+                          <p>
+                            You matched: {q.prompt || "Prompt image"} ↔{" "}
+                            {testAnswer(q, answers[id])}
+                          </p>
+                          <StudyImage
+                            name={
+                              q.choices.find((c) => c.id === answers[id])?.image
+                            }
+                            alt="Your matched answer"
+                          />
+                        </div>
                       ) : q.kind === "boolean" ? (
                         <>
                           <div className="truth-claim">
@@ -406,7 +447,7 @@ export function TestView({
                           ))}
                         </fieldset>
                       )}
-                      {instant && !show && (
+                      {instant && !show && q.kind !== "matching" && (
                         <button
                           className="secondary"
                           disabled={!answers[id]?.trim() || saving}
@@ -417,7 +458,19 @@ export function TestView({
                       )}
                       {show && (
                         <div className={ok ? "result-correct" : "result-wrong"}>
-                          <b>{ok ? "✓ Correct" : "✕ Incorrect"}</b>
+                          <b>
+                            {ok
+                              ? q.kind === "written" &&
+                                gradeAnswer(answers[id], q.answer) === "CLOSE"
+                                ? "✓ Close enough"
+                                : "✓ Correct"
+                              : "✕ Incorrect"}
+                          </b>
+                          {ok &&
+                            q.kind === "written" &&
+                            gradeAnswer(answers[id], q.answer) === "CLOSE" && (
+                              <CanonicalAnswer answer={q.answer} />
+                            )}
                           {!ok && (
                             <>
                               <p>Your answer: {testAnswer(q, answers[id])}</p>
