@@ -16,4 +16,5 @@ function verify({tag='v0.1.1', cargoVersion='0.1.1', mode='check', notes='# Flin
   return files;
 }
 test('release validates exact tag, all version files and clean notes',()=>{ verify(); assert.throws(()=>verify({tag:'v0.1.2'}),/must equal/); assert.throws(()=>verify({cargoVersion:'0.1.0'}),/Version mismatch/); assert.throws(()=>verify({notes:'# Flint 0.1.1\n\nTODO'}),/clean RELEASE_NOTES/); });
+test('Windows CRLF notes validate identically to LF notes', () => {verify({notes:'# Flint 0.1.1\r\n\r\nReliable updates.\r\n'});});
 test('patch preparation synchronizes locks and config without publishing',()=>{const files=verify({mode:'patch'}); for(const p of ['package.json','package-lock.json','src-tauri/tauri.conf.json']) assert.equal(JSON.parse(files[p]).version,'0.1.2'); assert.match(files['src-tauri/Cargo.lock'],/0.1.2/); assert.match(files['src-tauri/Cargo.toml'],/0.1.2/);});

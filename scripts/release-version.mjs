@@ -12,7 +12,7 @@ if (mode === 'check') {
   if (config.bundle.createUpdaterArtifacts !== true) throw Error('Production updater artifacts must be enabled.');
   if (!Buffer.from(config.plugins.updater.pubkey, 'base64').toString().includes('minisign public key:')) throw Error('Missing or invalid updater public key.');
   if (config.plugins.updater.endpoints[0] !== 'https://github.com/Angingongic/flint/releases/latest/download/latest.json') throw Error('Incorrect production endpoint.');
-  const notes = readFileSync('RELEASE_NOTES.md', 'utf8').trim();
+  const notes = readFileSync('RELEASE_NOTES.md', 'utf8').replace(/\r\n/g, '\n').trim();
   if (!notes.startsWith(`# Flint ${pkg.version}\n`) || notes.includes('TODO')) throw Error('Write clean RELEASE_NOTES.md for this version before tagging.');
   console.log(`Release ${tag}: all versions and updater configuration agree.`);
 } else {
