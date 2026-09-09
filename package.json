@@ -1,18 +1,20 @@
 {
   "name": "flint",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "npm run test:frontend && npm run test:ci",
     "test:frontend": "vitest run",
-    "test:ci": "node --test scripts/ci-build.test.mjs",
+    "test:ci": "node --test scripts/ci-build.test.mjs scripts/release-version.test.mjs",
     "lint": "tsc --noEmit",
     "format": "prettier --check src scripts package.json",
     "tauri": "tauri",
     "publish-update": "node scripts/publish-update.mjs",
+    "release:prepare": "node scripts/release-version.mjs",
+    "release:check": "node scripts/release-version.mjs check",
     "bootstrap": "powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1"
   },
   "dependencies": {

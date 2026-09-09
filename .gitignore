@@ -6,6 +6,7 @@ src-tauri/target/
 outputs/
 work/
 ci-artifacts/
+FlintBuilds/
 .env.*
 *.p12
 *.p8

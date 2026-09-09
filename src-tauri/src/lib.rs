@@ -467,6 +467,31 @@ fn write_backup(
     Ok(())
 }
 #[tauri::command]
+fn prepare_update_backup(preferences: String, db: State<Db>) -> Result<(), String> {
+    let _: serde_json::Value = serde_json::from_str(&preferences).map_err(|e| e.to_string())?;
+    let dir = db
+        .path
+        .parent()
+        .ok_or("Missing data directory")?
+        .join("update-backups");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let id = Uuid::new_v4().to_string();
+    // Hold the database mutex through checkpoint and copy, so pending writes
+    // finish before the snapshot and no new write races the backup.
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA wal_checkpoint(FULL)")
+        .map_err(|e| e.to_string())?;
+    write_backup(
+        &db.path,
+        Some(&db.media_dir),
+        &dir.join(format!("{id}.flintbackup")),
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    fs::write(dir.join(format!("{id}.preferences.json")), preferences)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+#[tauri::command]
 fn create_backup(path: String, db: State<Db>) -> Result<(), String> {
     db.conn
         .lock()
@@ -657,6 +682,7 @@ pub fn run() {
             list_decks,
             save_deck,
             update_deck_details,
+            prepare_update_backup,
             export_text,
             record_review,
             study_queue,

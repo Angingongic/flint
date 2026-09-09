@@ -1782,3 +1782,6 @@ button:disabled {
     transition: none;
   }
 }
+/* Updates stay quiet until actionable and use the same restrained surfaces. */
+.update-notice{position:fixed;bottom:22px;right:22px;z-index:80;display:flex;gap:18px;align-items:center;max-width:min(520px,90vw);padding:16px 20px;background:var(--surface,#20262c);border:1px solid #ffffff20;border-radius:16px;box-shadow:0 12px 40px #0005}
+.update-settings{padding:24px}.update-settings label{display:flex;align-items:center;gap:10px}.update-settings input{width:auto}.update-settings button{margin-right:10px}.update-details progress{width:100%;accent-color:#ff793d}.update-notes{white-space:pre-wrap;max-height:240px;overflow:auto;line-height:1.7}.update-details .button-row{justify-content:flex-end;margin-top:24px}

@@ -25,13 +25,9 @@ Installed builds store decks, cards, scheduling data, reviews, tags, folders, im
 
 ## Signed updates and releases
 
-1. Generate a Tauri updater signing key and put its public key in `src-tauri/tauri.conf.json`.
-2. Change the update endpoint `OWNER` to the GitHub repository owner.
-3. Add `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` to GitHub Actions secrets. Never commit the private key.
-4. Bump both `package.json` and `src-tauri/tauri.conf.json` with semantic versioning and push a `v*` tag.
-5. GitHub Actions tests and builds Flint on Windows and macOS, signs the updater artifacts, publishes installers, and creates `latest.json` for installed copies.
+See [RELEASING.md](RELEASING.md) for the exact procedure and installed-app acceptance test. `npm run release:prepare -- patch` synchronizes all version files; edit the release notes, verify, commit and explicitly push the matching version tag. Main pushes only run CI. Tagged releases are staged as drafts and published only after both platform builds and updater metadata validation pass.
 
-`npm run publish-update -- patch` (or `minor`/`major`) formats, lints, tests, validates Rust and migrations, bumps all versions, writes release notes, commits, tags, and pushes. GitHub Actions then builds and signs Windows/macOS installers and publishes the updater manifest. A release is never published if validation or packaging fails.
+The production HTTPS endpoint and public updater key are configured. The private key is supplied through GitHub Actions Secrets and never committed. Apple notarization and Windows publisher signing are separate from mandatory Tauri updater signatures.
 
 ## Troubleshooting
 

@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 const env = { ...process.env };
 const mac = process.platform === 'darwin';
 const updater = Boolean(env.TAURI_SIGNING_PRIVATE_KEY);
+if (process.argv.includes('--release') && !updater) throw new Error('Production release requires TAURI_SIGNING_PRIVATE_KEY. Password may be empty.');
 const developerId = mac && Boolean(env.APPLE_CERTIFICATE && env.APPLE_SIGNING_IDENTITY);
 const notarize = developerId && Boolean(env.APPLE_ID && env.APPLE_PASSWORD && env.APPLE_TEAM_ID);
 if (!developerId) {

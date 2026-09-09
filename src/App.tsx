@@ -70,8 +70,7 @@ import {
   recordTestAttempt,
 } from "./native";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { UpdateProvider, UpdateSettings } from "./Updates";
 import { getVersion } from "@tauri-apps/api/app";
 type Page =
   | "Home"
@@ -290,6 +289,7 @@ export function App() {
   };
   const visibleDecks = decks.filter(activeSet);
   return (
+    <UpdateProvider blocked={page === "Create" || page === "Import" || !!studyMode}>
     <div
       className={"shell " + (focused ? "focus-shell" : "")}
       style={
@@ -521,6 +521,7 @@ export function App() {
         <Toasts />
       </main>
     </div>
+    </UpdateProvider>
   );
 }
 function Logo() {
@@ -1897,68 +1898,6 @@ function AboutSettings() {
           <p>Version {version || "Loading…"} · Local-first study application</p>
         </div>
       </span>
-    </div>
-  );
-}
-function UpdateSettings() {
-  const [status, setStatus] = useState("Automatic checks enabled"),
-    [update, setUpdate] = useState<any>(null),
-    [busy, setBusy] = useState(false);
-  const run = async () => {
-    if (!inTauri()) {
-      setStatus("Update checks are available in the installed desktop app.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const u = await check();
-      setUpdate(u);
-      setStatus(
-        u
-          ? `Update available — Version ${u.version}`
-          : `Flint is up to date · Last checked ${new Date().toLocaleTimeString()}`,
-      );
-    } catch {
-      setStatus(
-        "Update couldn't be checked. Your current version is unchanged.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-  const install = async () => {
-    try {
-      setBusy(true);
-      setStatus("Downloading and verifying signed update…");
-      await update.downloadAndInstall();
-      setStatus("Update ready. Restart to install.");
-    } catch {
-      setStatus(
-        "Update couldn't be installed. Your current version is unchanged.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="panel setting">
-      <span>
-        <Download />
-        <div>
-          <b>Updates</b>
-          <p>{status}</p>
-          {update?.body && <small>{update.body}</small>}
-        </div>
-      </span>
-      <div className="button-row">
-        <button disabled={busy} onClick={run}>
-          {busy ? "Checking…" : "Check for updates"}
-        </button>
-        {update && <button onClick={install}>Update now</button>}
-        {status.startsWith("Update ready") && (
-          <button onClick={() => relaunch()}>Restart</button>
-        )}
-      </div>
     </div>
   );
 }

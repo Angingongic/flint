@@ -4,11 +4,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const source = readFileSync(new URL('./ci-build.mjs', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gm, '');
-function simulate(platform, env = {}) {
+function simulate(platform, env = {}, argv = []) {
   const files = {};
   let call;
   runInNewContext(source, {
-    process: { platform, env, execPath: 'node', exit: code => assert.equal(code, 0) },
+    process: { platform, env, argv, execPath: 'node', exit: code => assert.equal(code, 0) },
     mkdirSync() {}, writeFileSync: (path, data) => { files[path] = data; },
     spawnSync: (command, args, options) => { call = { command, args, ...options }; return { status: 0 }; },
     console: { log() {} },
@@ -22,6 +22,10 @@ test('credential-free Mac build is universal, ad-hoc and not notarized', () => {
   assert.ok(result.call.args.includes('universal-apple-darwin'));
   assert.ok(result.call.args.includes('app,dmg'));
   assert.match(result.status, /NOT NOTARIZED/);
+});
+test('production release requires signing but supports an empty password', () => {
+  assert.throws(() => simulate('darwin', {}, ['--release']), /requires TAURI_SIGNING_PRIVATE_KEY/);
+  assert.equal(simulate('darwin', {TAURI_SIGNING_PRIVATE_KEY:'secret', TAURI_SIGNING_PRIVATE_KEY_PASSWORD:''}, ['--release']).config.bundle.createUpdaterArtifacts, true);
 });
 test('Windows retains NSIS and MSI without Apple environment', () => {
   const result = simulate('win32', { APPLE_CERTIFICATE: 'secret', APPLE_ID: 'email' });
