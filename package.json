@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "test": "npm run test:frontend && npm run test:ci",
     "test:frontend": "vitest run",
-    "test:ci": "node --test scripts/ci-build.test.mjs scripts/release-version.test.mjs",
+    "test:ci": "node --test scripts/ci-build.test.mjs scripts/release-version.test.mjs scripts/verify-release.test.mjs",
     "lint": "tsc --noEmit",
     "format": "prettier --check src scripts package.json",
     "tauri": "tauri",

@@ -2,13 +2,19 @@ import { execFileSync } from 'node:child_process';
 const tag = process.env.RELEASE_TAG, repo = process.env.GITHUB_REPOSITORY;
 if (!tag || !repo) throw Error('RELEASE_TAG and GITHUB_REPOSITORY required');
 const gh = args => execFileSync('gh',args,{encoding:'utf8'});
-const release = JSON.parse(gh(['api',`repos/${repo}/releases/tags/${tag}`]));
+// GitHub's by-tag REST lookup can return 404 for drafts. Resolve the draft
+// through the authenticated release list, then use its stable numeric ID.
+const pages = JSON.parse(gh(['api',`repos/${repo}/releases?per_page=100`,'--paginate','--slurp']));
+const release = pages.flat().find(r => r.tag_name === tag);
+if (!release) throw Error(`Release ${tag} not found`);
 const asset = release.assets.find(a=>a.name==='latest.json');
 if (!asset) throw Error('Missing latest.json');
 const download = id => gh(['api',`repos/${repo}/releases/assets/${id}`,'-H','Accept: application/octet-stream']);
 const metadata = JSON.parse(download(asset.id));
 if (metadata.version !== tag.slice(1)) throw Error('Updater version does not match release tag');
-for (const platform of ['windows-x86_64','darwin-aarch64','darwin-x86_64']) {
+for (const required of ['windows-x86_64','darwin-aarch64','darwin-x86_64']) if (!metadata.platforms?.[required]) throw Error(`Missing ${required}`);
+if (!metadata.notes?.trim()) throw Error('Updater release notes are empty');
+for (const platform of Object.keys(metadata.platforms)) {
   const item = metadata.platforms?.[platform];
   if (!item?.signature || !item.url?.startsWith(`https://github.com/${repo}/releases/download/${tag}/`)) throw Error(`Invalid ${platform} metadata`);
   const name = decodeURIComponent(new URL(item.url).pathname.split('/').pop());
