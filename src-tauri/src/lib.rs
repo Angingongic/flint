@@ -10,7 +10,9 @@ use std::{
 };
 use tauri::{Emitter, Manager, State};
 mod portable;
+mod trash;
 use portable::{cancel_flint, export_flint, import_flint, preview_flint, PendingSet};
+use trash::{cleanup_trash, update_decks_details};
 struct OpenedSets(Mutex<Vec<String>>);
 fn queue_sets(app: &tauri::AppHandle, paths: Vec<String>) {
     if let Ok(mut pending) = app.state::<OpenedSets>().0.lock() {
@@ -32,7 +34,7 @@ fn opened_sets(state: State<OpenedSets>) -> Result<Vec<String>, String> {
 }
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -107,7 +109,7 @@ fn open_db(path: &Path) -> Result<Connection, String> {
     Ok(c)
 }
 fn migrate(c: &Connection) -> Result<(), String> {
-    debug_assert_eq!(SCHEMA_VERSION, 5);
+    debug_assert_eq!(SCHEMA_VERSION, 6);
     let current: i64 = c
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
@@ -184,6 +186,21 @@ CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck_id);CREATE INDEX IF NOT 
         }
         c.pragma_update(None, "user_version", 5)
             .map_err(|e| e.to_string())?;
+    }
+    if current < 6 {
+        let has_position: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('cards') WHERE name='position')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let position = if has_position {
+            ""
+        } else {
+            "ALTER TABLE cards ADD COLUMN position INTEGER NOT NULL DEFAULT 0;"
+        };
+        c.execute_batch(&format!("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS media_cleanup(name TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS media_retired(deck_id TEXT NOT NULL REFERENCES decks(id) ON DELETE CASCADE,name TEXT NOT NULL,PRIMARY KEY(deck_id,name)); {position} PRAGMA user_version=6; COMMIT;")).map_err(|e|e.to_string())?;
     }
     Ok(())
 }
@@ -281,7 +298,7 @@ fn list_decks(db: State<Db>) -> Result<Vec<Deck>, String> {
     for row in rows {
         let (id, title, subject, color, favorite, last_studied, cover_image, metadata, created_at) =
             row.map_err(|e| e.to_string())?;
-        let mut st=c.prepare("SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image FROM cards WHERE deck_id=? ORDER BY created_at").map_err(|e|e.to_string())?;
+        let mut st=c.prepare("SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image FROM cards WHERE deck_id=? ORDER BY position,created_at,rowid").map_err(|e|e.to_string())?;
         let cards = st
             .query_map([&id], row_card)
             .map_err(|e| e.to_string())?
@@ -310,10 +327,13 @@ fn save_deck(deck: Deck, source: Option<String>, db: State<Db>) -> Result<(), St
 
 #[tauri::command]
 fn update_deck_details(deck: Deck, db: State<Db>) -> Result<(), String> {
-    let c = db.conn.lock().map_err(|e| e.to_string())?;
-    persist_details(&c, &deck)
+    let mut c = db.conn.lock().map_err(|e| e.to_string())?;
+    persist_details(&c, &deck)?;
+    trash::prune(&mut c, &db.media_dir, Utc::now())?;
+    Ok(())
 }
 fn persist_details(c: &Connection, deck: &Deck) -> Result<(), String> {
+    c.execute("INSERT OR IGNORE INTO media_retired(deck_id,name) SELECT id,cover_image FROM decks WHERE id=? AND cover_image IS NOT NULL",[&deck.id]).map_err(|e|e.to_string())?;
     let changed = c
         .execute(
             "UPDATE decks SET favorite=?,cover_image=?,metadata=?,modified_at=? WHERE id=?",
@@ -338,6 +358,7 @@ fn export_text(path: String, text: String) -> Result<(), String> {
 
 fn persist_deck(c: &mut Connection, deck: &Deck, source: Option<&str>) -> Result<(), String> {
     let tx = c.transaction().map_err(|e| e.to_string())?;
+    tx.execute("INSERT OR IGNORE INTO media_retired(deck_id,name) SELECT id,cover_image FROM decks WHERE id=?1 AND cover_image IS NOT NULL UNION SELECT deck_id,question_image FROM cards WHERE deck_id=?1 AND question_image IS NOT NULL UNION SELECT deck_id,answer_image FROM cards WHERE deck_id=?1 AND answer_image IS NOT NULL",[&deck.id]).map_err(|e|e.to_string())?;
     let now = Utc::now().to_rfc3339();
     tx.execute("INSERT INTO decks(id,title,subject,color,favorite,last_studied,cover_image,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,subject=excluded.subject,color=excluded.color,favorite=excluded.favorite,last_studied=excluded.last_studied,cover_image=excluded.cover_image,modified_at=excluded.modified_at",params![deck.id,deck.title,deck.subject,deck.color,deck.favorite,deck.last_studied,deck.cover_image,deck.created_at.as_deref().unwrap_or(&now),now]).map_err(|e|e.to_string())?;
     tx.execute(
@@ -363,8 +384,13 @@ fn persist_deck(c: &mut Connection, deck: &Deck, source: Option<&str>) -> Result
                 .map_err(|e| e.to_string())?;
         }
     }
-    for x in &deck.cards {
+    for (position, x) in deck.cards.iter().enumerate() {
         tx.execute("INSERT INTO cards(id,deck_id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET question=excluded.question,answer=excluded.answer,status=excluded.status,accuracy=excluded.accuracy,due_at=excluded.due_at,interval_days=excluded.interval_days,ease=excluded.ease,repetitions=excluded.repetitions,lapses=excluded.lapses,last_reviewed=excluded.last_reviewed,source_name=excluded.source_name,source_location=excluded.source_location,question_image=excluded.question_image,answer_image=excluded.answer_image,modified_at=excluded.modified_at",params![x.id,deck.id,x.question,x.answer,x.status,x.accuracy,x.due_at,x.interval_days,x.ease,x.repetitions,x.lapses,x.last_reviewed,x.source_name,x.source_location,x.question_image,x.answer_image,now,now]).map_err(|e|e.to_string())?;
+        tx.execute(
+            "UPDATE cards SET position=? WHERE id=? AND deck_id=?",
+            params![position as i64, x.id, deck.id],
+        )
+        .map_err(|e| e.to_string())?;
     }
     if let Some(s) = source {
         tx.execute(
@@ -725,6 +751,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_decks,
+            cleanup_trash,
+            update_decks_details,
             save_deck,
             update_deck_details,
             prepare_update_backup,

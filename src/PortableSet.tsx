@@ -7,6 +7,8 @@ import { inTauri } from "./native";
 import { Modal } from "./ui";
 import { SetCover } from "./covers";
 import { notify } from "./motion";
+import { DuplicateReview, duplicateCandidates } from "./DuplicateReview";
+import type { DuplicateChoice } from "./editing";
 export type PortablePreview = {
   token: string;
   deck: Deck;
@@ -36,6 +38,37 @@ export function PortableSets({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const lock = useRef(false);
+  const [reviewDuplicates, setReviewDuplicates] = useState(false);
+  const importPreview = async (choices: DuplicateChoice[] = []) => {
+    if (lock.current || !preview) return;
+    lock.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const deck = await invoke<Deck>("import_flint", {
+        token: preview.token,
+        ...(choices.length ? { choices } : {}),
+      });
+      onImported({
+        ...deck,
+        cards: deck.cards.map((c) => ({
+          ...c,
+          due: new Date(c.dueAt || 0) <= new Date(),
+        })),
+      });
+      setReviewDuplicates(false);
+      setPreview(null);
+      notify(
+        `${deck.cards.length} cards imported · ${choices.filter((c) => c.action === "skip").length} skipped · ${choices.filter((c) => c.action === "replace").length} replaced`,
+      );
+    } catch (e) {
+      setError(String(e));
+      setReviewDuplicates(false);
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  };
   useEffect(() => {
     onBusy(!!preview || busy || !!error || !!paths.length);
   }, [preview, busy, error, paths.length, onBusy]);
@@ -138,6 +171,14 @@ export function PortableSets({
       </div>
     ) : null;
   const conflict = preview && importConflicts(preview.deck, decks);
+  if (reviewDuplicates && preview)
+    return (
+      <DuplicateReview
+        cards={preview.deck.cards}
+        onClose={() => setReviewDuplicates(false)}
+        onConfirm={importPreview}
+      />
+    );
   return (
     <Modal
       title={preview ? "Import Flint set" : "Couldn't import set"}
@@ -195,30 +236,10 @@ export function PortableSets({
           <button
             className="primary"
             disabled={busy}
-            onClick={async () => {
-              if (lock.current) return;
-              lock.current = true;
-              setBusy(true);
-              setError("");
-              try {
-                const deck = await invoke<Deck>("import_flint", {
-                  token: preview.token,
-                });
-                onImported({
-                  ...deck,
-                  cards: deck.cards.map((c) => ({
-                    ...c,
-                    due: new Date(c.dueAt || 0) <= new Date(),
-                  })),
-                });
-                setPreview(null);
-                notify("Set imported as a new copy");
-              } catch (e) {
-                setError(String(e));
-              } finally {
-                lock.current = false;
-                setBusy(false);
-              }
+            onClick={() => {
+              if (duplicateCandidates(preview.deck.cards).length)
+                setReviewDuplicates(true);
+              else void importPreview();
             }}
           >
             Import as new set

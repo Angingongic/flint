@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Deck } from "./lib";
 import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
+import { editableTarget } from "./editing";
 import {
   mediaUrl,
   loadStudySession,
@@ -719,6 +720,34 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
     }
     lock.current = false;
   };
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (
+        e.defaultPrevented ||
+        e.repeat ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey ||
+        editableTarget(e.target) ||
+        document.querySelector("dialog[open]") ||
+        !started ||
+        response ||
+        phase ||
+        state?.checkpoint ||
+        question?.kind !== "choice"
+      )
+        return;
+      const index = Number(e.key) - 1;
+      if (index < 0 || index > 3 || !Number.isInteger(index)) return;
+      const selected = deck.cards.find((c) => c.id === choices.current[index]);
+      if (selected && question) {
+        e.preventDefault();
+        void answer(sides(selected, question.reverse).answer, selected.id);
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [started, response, phase, state, signature]);
   // Keep the submitted question visible until its persistence and feedback finish.
   return (
     <div className="learn-session">

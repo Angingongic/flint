@@ -11,6 +11,7 @@ import {
   testLabels,
   TestKind,
   TestQuestion,
+  testRows,
 } from "./test-engine";
 import { recordTestAttempt } from "./native";
 import { StudyImage } from "./Study";
@@ -43,43 +44,20 @@ export function TestView({
     refs = useRef<Record<string, HTMLElement | null>>({}),
     scoreRef = useRef<HTMLDivElement>(null),
     reduced = useReducedMotion();
-  const missing = questions?.filter((q) => !answers[q.card.id]?.trim()) || [];
-  const matches = useMemo(
-    () => questions?.filter((q) => q.kind === "matching") || [],
-    [questions],
-  );
-  const matchLeft = useMemo(
-    () =>
-      matches.map((q) => ({
-        id: q.card.id,
-        text: q.prompt,
-        image: q.promptImage,
-      })),
-    [matches],
-  );
-  const matchRight = useMemo(
-    () =>
-      matches.map((q) => ({
-        id: q.card.id,
-        text: q.answer,
-        image: q.answerImage,
-      })),
-    [matches],
-  );
-  const matchingRef = useRef<HTMLDivElement>(null);
-  const correct =
-    questions?.filter((q) => testCorrect(q, answers[q.card.id])) || [];
+  const rows = useMemo(() => testRows(questions || []), [questions]);
+  const missing = rows.filter((q) => !answers[q.card.id]?.trim());
+  const correct = rows.filter((q) => testCorrect(q, answers[q.card.id]));
   const jump = (id: string) => {
-    const el =
-      !submitted && matches.some((q) => q.card.id === id)
-        ? matchingRef.current
-        : refs.current[id];
+    const group = questions?.find((q) =>
+      q.matchRows?.some((row) => row.card.id === id),
+    );
+    const el = refs.current[group?.card.id || id];
     el?.scrollIntoView({
       behavior: reduced ? "auto" : "smooth",
       block: "center",
     });
     (
-      (el?.querySelector("input,select") ||
+      (el?.querySelector("input,select,.drag-handle") ||
         el?.querySelector("button")) as HTMLElement | null
     )?.focus({
       preventScroll: true,
@@ -99,15 +77,21 @@ export function TestView({
       await recordTestAttempt(
         deck.id,
         correct.length,
-        questions.length,
-        questions.map((q) => ({
+        rows.length,
+        rows.map((q) => ({
           cardId: q.card.id,
           kind: q.kind,
           question: q.prompt,
           answer: q.answer,
           user: testAnswer(q, answers[q.card.id]),
           correct: testCorrect(q, answers[q.card.id]),
-          flagged: flags.includes(q.card.id),
+          flagged: questions.some(
+            (group) =>
+              flags.includes(group.card.id) &&
+              (group.matchRows || [group]).some(
+                (row) => row.card.id === q.card.id,
+              ),
+          ),
         })),
       );
       setSubmitted(true);
@@ -141,7 +125,7 @@ export function TestView({
         <span>{deck.title} · Test</span>
         {questions && (
           <b>
-            {questions.length - missing.length} / {questions.length} answered
+            {rows.length - missing.length} / {rows.length} rows answered
           </b>
         )}
       </div>
@@ -159,7 +143,7 @@ export function TestView({
           </div>
           <div className="config-fields">
             <label>
-              Questions
+              Cards to test
               <input
                 aria-label="Number of questions"
                 type="number"
@@ -220,8 +204,19 @@ export function TestView({
                 !kinds.length
               }
               onClick={() => {
-                setQuestions(makeTest(deck.cards, count, kinds, direction));
-                setAnswers({});
+                const generated = makeTest(deck.cards, count, kinds, direction);
+                setQuestions(generated);
+                setAnswers(
+                  Object.fromEntries(
+                    generated.flatMap(
+                      (q) =>
+                        q.matchRows?.map((row, i) => [
+                          row.card.id,
+                          q.initialOrder![i],
+                        ]) || [],
+                    ),
+                  ),
+                );
                 setFlags([]);
                 setChecked([]);
                 setSubmitted(false);
@@ -239,20 +234,20 @@ export function TestView({
           {submitted && (
             <div ref={scoreRef} tabIndex={-1} className="test-score">
               <p className="eyebrow">TEST COMPLETE</p>
-              <h2>{Math.round((correct.length / questions.length) * 100)}%</h2>
+              <h2>{Math.round((correct.length / rows.length) * 100)}%</h2>
               <p>
-                {correct.length} correct · {questions.length - correct.length}{" "}
+                {correct.length} correct · {rows.length - correct.length}{" "}
                 incorrect
               </p>
               <p>
-                {missing.length} unanswered · {correct.length} /{" "}
-                {questions.length} correct
+                {missing.length} unanswered · {correct.length} / {rows.length}{" "}
+                correct
               </p>
               <div className="type-performance">
                 {(Object.keys(testLabels) as TestKind[])
                   .filter((kind) => questions.some((q) => q.kind === kind))
                   .map((kind) => {
-                    const items = questions.filter((q) => q.kind === kind),
+                    const items = rows.filter((q) => q.kind === kind),
                       right = items.filter((q) =>
                         testCorrect(q, answers[q.card.id]),
                       ).length;
@@ -271,13 +266,13 @@ export function TestView({
                   })}
               </div>
               <div className="button-row">
-                {correct.length < questions.length && (
+                {correct.length < rows.length && (
                   <button
                     className="primary"
                     onClick={() =>
                       studyMissed({
                         ...deck,
-                        cards: questions
+                        cards: rows
                           .filter((q) => !testCorrect(q, answers[q.card.id]))
                           .map((q) => q.card),
                       })
@@ -310,32 +305,6 @@ export function TestView({
           )}
           <div className="exam-layout">
             <div className="exam-document">
-              {!!matches.length && (
-                <div ref={matchingRef}>
-                  <Matching
-                    left={matchLeft}
-                    right={matchRight}
-                    termFirst={direction !== "terms"}
-                    pairs={Object.fromEntries(
-                      matches
-                        .filter((q) => answers[q.card.id])
-                        .map((q) => [q.card.id, answers[q.card.id]]),
-                    )}
-                    disabled={submitted || saving}
-                    reveal={submitted || instant}
-                    onChange={(pairs) =>
-                      setAnswers((old) => ({
-                        ...Object.fromEntries(
-                          Object.entries(old).filter(
-                            ([id]) => !matches.some((q) => q.card.id === id),
-                          ),
-                        ),
-                        ...pairs,
-                      }))
-                    }
-                  />
-                </div>
-              )}
               {questions.map((q, index) => {
                 const id = q.card.id,
                   show =
@@ -343,7 +312,6 @@ export function TestView({
                     checked.includes(id) ||
                     (instant && q.kind === "matching" && !!answers[id]),
                   ok = testCorrect(q, answers[id]);
-                if (q.kind === "matching" && !show) return null;
                 return (
                   <article
                     className="worksheet-question"
@@ -381,8 +349,17 @@ export function TestView({
                           </span>
                         </button>
                       </div>
-                      <h2>{q.prompt}</h2>
-                      <StudyImage name={q.promptImage} alt="Question visual" />
+                      <h2>
+                        {q.matchRows
+                          ? `Match ${q.matchRows.length} pairs`
+                          : q.prompt}
+                      </h2>
+                      {!q.matchRows && (
+                        <StudyImage
+                          name={q.promptImage}
+                          alt="Question visual"
+                        />
+                      )}
                       {q.kind === "written" ? (
                         <AnswerInput
                           cards={deck.cards}
@@ -393,18 +370,32 @@ export function TestView({
                           onValue={(value) => update(id, value)}
                         />
                       ) : q.kind === "matching" ? (
-                        <div>
-                          <p>
-                            You matched: {q.prompt || "Prompt image"} ↔{" "}
-                            {testAnswer(q, answers[id])}
-                          </p>
-                          <StudyImage
-                            name={
-                              q.choices.find((c) => c.id === answers[id])?.image
-                            }
-                            alt="Your matched answer"
-                          />
-                        </div>
+                        <Matching
+                          left={q.matchRows!.map((row) => ({
+                            id: row.card.id,
+                            text: row.prompt,
+                            image: row.promptImage,
+                          }))}
+                          right={q.choices}
+                          termFirst={direction !== "terms"}
+                          order={q.matchRows!.map(
+                            (row) => answers[row.card.id],
+                          )}
+                          disabled={submitted || saving}
+                          reveal={submitted || instant}
+                          onChange={(order) => {
+                            setAnswers((old) => ({
+                              ...old,
+                              ...Object.fromEntries(
+                                q.matchRows!.map((row, i) => [
+                                  row.card.id,
+                                  order[i],
+                                ]),
+                              ),
+                            }));
+                            setCurrent(id);
+                          }}
+                        />
                       ) : q.kind === "boolean" ? (
                         <>
                           <div className="truth-claim">
@@ -456,7 +447,7 @@ export function TestView({
                           Check answer
                         </button>
                       )}
-                      {show && (
+                      {show && q.kind !== "matching" && (
                         <div className={ok ? "result-correct" : "result-wrong"}>
                           <b>
                             {ok
@@ -544,8 +535,7 @@ export function TestView({
           {!submitted && (
             <div className="exam-footer">
               <span>
-                {questions.length - missing.length} of {questions.length}{" "}
-                answered
+                {rows.length - missing.length} of {rows.length} answered
               </span>
               <DeferredLoading busy={saving} label="Saving result" />
               <button

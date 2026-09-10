@@ -23,6 +23,8 @@ vi.mock("./native", () => ({
   loadNativeDecks: vi.fn(async () => null),
   saveNativeDeck: vi.fn(async () => {}),
   updateDeckDetails: vi.fn(async () => {}),
+  updateDeckBatch: vi.fn(async () => {}),
+  pruneTrash: vi.fn(async (decks: Deck[]) => decks),
   exportDeckText: vi.fn(async () => {}),
   exportFlint: vi.fn(async () => {}),
   reviewNative: vi.fn(async () => {}),
@@ -161,7 +163,12 @@ describe("study interactions", () => {
         .getByRole("button", { name: "Flag question 1" })
         .getAttribute("aria-pressed"),
     ).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Go to question 4" }));
+    const groupIndex = Array.from(
+      document.querySelectorAll(".worksheet-question"),
+    ).findIndex((el) => el.querySelector(".matching-board"));
+    fireEvent.click(
+      screen.getByRole("button", { name: `Go to question ${groupIndex + 1}` }),
+    );
     expect(document.activeElement?.tagName).toBe("BUTTON");
     expect(document.activeElement?.closest(".matching-board")).toBeTruthy();
     const first = document.querySelector<HTMLElement>(".worksheet-question")!;
@@ -326,12 +333,14 @@ describe("study interactions", () => {
     localStorage.setItem("flint-decks", JSON.stringify([deck]));
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Library" }));
-    fireEvent.click(screen.getByRole("button", { name: "Study" }));
-    expect(screen.getByText("What would you like to do?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open Biology" }));
+
+    expect(screen.getByRole("button", { name: /Flashcards/i })).toBeTruthy();
+
     for (const name of ["Flashcards →", "Learn →", "Test →"]) {
       fireEvent.click(screen.getByRole("button", { name: new RegExp(name) }));
       fireEvent.click(screen.getByRole("button", { name: "← Back to set" }));
-      expect(screen.getByText("What would you like to do?")).toBeTruthy();
+      expect(screen.getByRole("button", { name: /Flashcards/i })).toBeTruthy();
     }
   });
   it("flips and navigates without recall rating controls", () => {

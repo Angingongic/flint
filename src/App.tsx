@@ -16,8 +16,23 @@ import {
   activeSet,
   SetActions,
 } from "./LibraryView";
-import { updateDeckDetails, exportFlint } from "./native";
+import {
+  updateDeckDetails,
+  updateDeckBatch,
+  pruneTrash,
+  exportFlint,
+} from "./native";
+import {
+  editableTarget,
+  useUndoState,
+  resolveDuplicates,
+  resolvedStars,
+  type DuplicateChoice,
+} from "./editing";
+import { DuplicateReview, duplicateCandidates } from "./DuplicateReview";
 import { PortableSets } from "./PortableSet";
+import { Commands, ShortcutHelp, modifierLabel } from "./Commands";
+import { ImageCrop } from "./ImageCrop";
 import {
   Home,
   Library,
@@ -107,6 +122,8 @@ const load = () => {
 };
 export function App() {
   const [portableBusy, setPortableBusy] = useState(false);
+  const [commands, setCommands] = useState(false),
+    [shortcutHelp, setShortcutHelp] = useState(false);
   const [page, setPage] = useState<Page>("Home");
   const [decks, setDecks] = useState<Deck[]>(load);
   const [dark, setDark] = useState(
@@ -122,6 +139,52 @@ export function App() {
     localStorage.getItem("flint-display-name") || "",
   );
   const [appError, setAppError] = useState("");
+  const undoActions = useRef<Array<() => Promise<void>>>([]);
+  const undoBusy = useRef(false);
+  const undoLibrary = async () => {
+    if (undoBusy.current) return;
+    const action = undoActions.current.pop();
+    if (!action) return;
+    undoBusy.current = true;
+    try {
+      await action();
+      notify("Change undone");
+    } catch {
+      notify(
+        "Could not undo this change; it may have expired from Trash",
+        "error",
+      );
+    } finally {
+      undoBusy.current = false;
+    }
+  };
+  const decksRef = useRef(decks);
+  decksRef.current = decks;
+  useEffect(() => {
+    let active = true;
+    const cleanup = async () => {
+      try {
+        const current = decksRef.current;
+        const clean = await pruneTrash(current);
+        if (active && clean.length !== current.length)
+          setDecks((old) =>
+            old.filter(
+              (d) =>
+                !current.some((c) => c.id === d.id) ||
+                clean.some((c) => c.id === d.id),
+            ),
+          );
+      } catch (error) {
+        if (active) setAppError(String(error));
+      }
+    };
+    const timer = setInterval(() => void cleanup(), 60000);
+    void cleanup();
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
   useEffect(() => {
     loadNativeDecks()
       .then((native) => {
@@ -141,15 +204,43 @@ export function App() {
   }, [dark]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommands(true);
+        return;
+      }
+      if (
+        document.querySelector('dialog[open],[aria-modal="true"]') ||
+        editableTarget(event.target)
+      )
+        return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void undoLibrary();
+      } else if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === "n"
+      ) {
+        event.preventDefault();
+        setEditingDeck(null);
+        go("Create");
+      } else if (event.key === "/") {
         event.preventDefault();
         go("Library");
         requestAnimationFrame(() => searchRef.current?.focus());
+      } else if (event.key === "?") {
+        event.preventDefault();
+        setShortcutHelp(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        if (studyMode) setStudyMode(null);
+        else go("Library");
       }
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, []);
+  }, [studyMode, studyDeck]);
   const go = (p: Page) => {
     window.location.hash = p;
     setPage(p);
@@ -249,20 +340,65 @@ export function App() {
   const setActions: SetActions = {
     edit: editSet,
     update: async (deck) => {
+      const previous = decks.find((d) => d.id === deck.id);
       await updateDeckDetails(deck);
-      setDecks((current) =>
-        current.map((d) =>
-          d.id === deck.id
-            ? {
-                ...d,
-                favorite: deck.favorite,
-                coverImage: deck.coverImage,
-                meta: deck.meta,
-              }
-            : d,
+      if (previous)
+        undoActions.current.push(async () => {
+          await updateDeckDetails(previous);
+          setDecks((old) =>
+            old.map((d) =>
+              d.id === previous.id
+                ? {
+                    ...d,
+                    meta: previous.meta,
+                    favorite: previous.favorite,
+                    coverImage: previous.coverImage,
+                  }
+                : d,
+            ),
+          );
+          if (studyDeck?.id === previous.id)
+            setStudyDeck((old) =>
+              old
+                ? {
+                    ...old,
+                    meta: previous.meta,
+                    favorite: previous.favorite,
+                    coverImage: previous.coverImage,
+                  }
+                : old,
+            );
+        });
+      const next = decks.map((d) =>
+        d.id === deck.id
+          ? {
+              ...d,
+              favorite: deck.favorite,
+              coverImage: deck.coverImage,
+              meta: deck.meta,
+            }
+          : d,
+      );
+      setDecks(await pruneTrash(next));
+      if (studyDeck?.id === deck.id) setStudyDeck(deck);
+    },
+    batch: async (changes) => {
+      const previous = decks.filter((d) => changes.some((c) => c.id === d.id));
+      await updateDeckBatch(changes);
+      setDecks(
+        await pruneTrash(
+          decks.map((d) => changes.find((c) => c.id === d.id) || d),
         ),
       );
-      if (studyDeck?.id === deck.id) setStudyDeck(deck);
+      undoActions.current.push(async () => {
+        await updateDeckBatch(previous);
+        setDecks((old) =>
+          old.map((d) => previous.find((p) => p.id === d.id) || d),
+        );
+      });
+      notify("Library updated", "success", () => {
+        void undoLibrary();
+      });
     },
     duplicate: async (deck) => {
       const copy = normalizeCover({
@@ -298,6 +434,29 @@ export function App() {
         portableBusy || page === "Create" || page === "Import" || !!studyMode
       }
     >
+      {commands && (
+        <Commands
+          onClose={() => setCommands(false)}
+          items={[
+            {
+              label: "New set",
+              run: () => {
+                setEditingDeck(null);
+                go("Create");
+              },
+            },
+            { label: "Library", run: () => go("Library") },
+            { label: "Import cards", run: () => go("Import") },
+            { label: "Settings", run: () => go("Settings") },
+            { label: "Keyboard shortcuts", run: () => setShortcutHelp(true) },
+            ...visibleDecks.map((d) => ({
+              label: "Study: " + d.title,
+              run: () => start(d),
+            })),
+          ]}
+        />
+      )}
+      {shortcutHelp && <ShortcutHelp onClose={() => setShortcutHelp(false)} />}
       <PortableSets
         decks={decks}
         onBusy={setPortableBusy}
@@ -327,6 +486,10 @@ export function App() {
             <span>Flint</span>
           </div>
           <nav>
+            <button onClick={() => setCommands(true)} title="Command palette">
+              <Keyboard size={18} />
+              Commands
+            </button>
             {nav.map(([label, Icon]) => (
               <button
                 key={label}
@@ -338,7 +501,7 @@ export function App() {
               >
                 <Icon size={18} />
                 <span>{label}</span>
-                {label === "Study" && <kbd>⌘ S</kbd>}
+                {label === "Create" && <kbd aria-hidden="true">{modifierLabel()} N</kbd>}
               </button>
             ))}
           </nav>
@@ -985,6 +1148,7 @@ function ManagedImage({ name, alt }: { name?: string | null; alt: string }) {
 }
 
 function ImportPage({ onImport }: { onImport: (d: Deck) => Promise<void> }) {
+  const [duplicateImport, setDuplicateImport] = useState<Deck | null>(null);
   const [text, setText] = useState(""),
     [source, setSource] = useState(""),
     [cards, setCards] = useState<{ question: string; answer: string }[]>([]),
@@ -1020,6 +1184,30 @@ function ImportPage({ onImport }: { onImport: (d: Deck) => Promise<void> }) {
   };
   return (
     <>
+      {duplicateImport && (
+        <DuplicateReview
+          cards={duplicateImport.cards}
+          onClose={() => setDuplicateImport(null)}
+          onConfirm={async (choices) => {
+            setBusy(true);
+            try {
+              const resolved = resolveDuplicates(
+                duplicateImport.cards,
+                choices,
+              );
+              await onImport({ ...duplicateImport, cards: resolved });
+              setDuplicateImport(null);
+              notify(
+                `${resolved.length} cards imported · ${choices.filter((c) => c.action === "skip").length} skipped · ${choices.filter((c) => c.action === "replace").length} replaced`,
+              );
+            } catch {
+              setError("Import failed. Your preview is still available.");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      )}
       <div className="page-title">
         <div>
           <h1>Import cards</h1>
@@ -1163,7 +1351,7 @@ function ImportPage({ onImport }: { onImport: (d: Deck) => Promise<void> }) {
               setBusy(true);
               setError("");
               try {
-                await onImport({
+                const importing: Deck = {
                   id: uid(),
                   title,
                   subject: "Imported",
@@ -1172,7 +1360,15 @@ function ImportPage({ onImport }: { onImport: (d: Deck) => Promise<void> }) {
                   cards: cards.map((c) =>
                     newCard(c.question, c.answer, source),
                   ),
-                });
+                };
+                if (duplicateCandidates(importing.cards).length)
+                  setDuplicateImport(importing);
+                else {
+                  await onImport(importing);
+                  notify(
+                    `${importing.cards.length} cards imported · no duplicates`,
+                  );
+                }
               } catch (reason) {
                 if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV)
                   console.error("[Flint import] save failed", reason);
@@ -1200,6 +1396,7 @@ function ImageField({
   onChange: (value: string | null) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const [crop, setCrop] = useState(false);
   const reduced = useReducedMotion();
   const removalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -1235,9 +1432,11 @@ function ImageField({
           }),
         );
       notify("Image added");
+      return true;
     } catch {
       setError("Could not attach the image. Please try again.");
       notify("Could not attach the image", "error");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1260,6 +1459,15 @@ function ImageField({
         }
       }}
     >
+      {crop && value && (
+        <ImageCrop
+          name={value}
+          onClose={() => setCrop(false)}
+          onApply={async (file) => {
+            if (!(await process(file))) throw Error("Image save failed");
+          }}
+        />
+      )}
       <input
         ref={input}
         type="file"
@@ -1317,6 +1525,13 @@ function ImageField({
             <button className="secondary" onClick={() => setLarge(true)}>
               View larger
             </button>
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => setCrop(true)}
+            >
+              Crop / reposition
+            </button>
           </>
         )}
       </div>
@@ -1352,6 +1567,8 @@ function CreatePage({
   initialDeck: Deck | null;
 }) {
   const reduced = useReducedMotion();
+  const [duplicateDraft, setDuplicateDraft] = useState<Deck | null>(null),
+    [bulkText, setBulkText] = useState("");
   const [removingCards, setRemovingCards] = useState<string[]>([]);
   const exitTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => () => exitTimers.current.forEach(clearTimeout), []);
@@ -1388,6 +1605,7 @@ function CreatePage({
         answer: card.answer,
         questionImage: card.questionImage || null,
         answerImage: card.answerImage || null,
+        starred: initialDeck.meta?.starredCards?.includes(card.id) || false,
       }))
     : Array.isArray(draft?.cards)
       ? draft.cards.map(
@@ -1398,6 +1616,7 @@ function CreatePage({
             answer?: string;
             questionImage?: string | null;
             answerImage?: string | null;
+            starred?: boolean;
           }) => ({
             draftId: card.draftId || uid(),
             cardId: card.cardId,
@@ -1405,6 +1624,7 @@ function CreatePage({
             answer: card.answer || "",
             questionImage: card.questionImage || null,
             answerImage: card.answerImage || null,
+            starred: !!card.starred,
           }),
         )
       : [blankDraftCard()];
@@ -1417,7 +1637,7 @@ function CreatePage({
         draft?.coverImage ||
         freshCover(setId, load()[0]),
     ),
-    [cards, setCards] = useState<
+    [cards, setCards, undoCards, canUndoCards] = useUndoState<
       {
         draftId: string;
         cardId?: string;
@@ -1425,6 +1645,7 @@ function CreatePage({
         answer: string;
         questionImage?: string | null;
         answerImage?: string | null;
+        starred?: boolean;
       }[]
     >(initialCards.length ? initialCards : [blankDraftCard()]),
     [saved, setSaved] = useState(true),
@@ -1495,6 +1716,13 @@ function CreatePage({
           answerImage: c.answerImage || null,
         })),
       };
+      deck.meta.starredCards = complete.flatMap((card, index) =>
+        card.starred ? [deck.cards[index].id] : [],
+      );
+      if (duplicateCandidates(deck.cards).length) {
+        setDuplicateDraft(deck);
+        return;
+      }
       await onCreate(deck);
       if (!initialDeck) localStorage.removeItem("flint-create-draft");
     } catch (reason) {
@@ -1505,8 +1733,78 @@ function CreatePage({
       setBusy(false);
     }
   };
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (document.querySelector("dialog[open]")) return;
+      if (event.ctrlKey || event.metaKey) {
+        if (
+          event.key.toLowerCase() === "z" &&
+          !event.shiftKey &&
+          (!editableTarget(event.target) ||
+            (event.target instanceof Element &&
+              event.target.closest(".edit-card")))
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!busy && !removingCards.length) undoCards();
+        } else if (event.key.toLowerCase() === "s") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!busy && !removingCards.length) void finish();
+        }
+      }
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [
+    cards,
+    title,
+    subject,
+    folder,
+    tags,
+    coverImage,
+    description,
+    busy,
+    removingCards,
+  ]);
   return (
     <>
+      {duplicateDraft && (
+        <DuplicateReview
+          cards={duplicateDraft.cards}
+          onClose={() => setDuplicateDraft(null)}
+          onConfirm={async (choices) => {
+            setBusy(true);
+            try {
+              const resolved = resolveDuplicates(duplicateDraft.cards, choices);
+              const ids = new Set(resolved.map((c) => c.id));
+              await onCreate({
+                ...duplicateDraft,
+                cards: resolved,
+                meta: {
+                  ...duplicateDraft.meta,
+                  starredCards: resolvedStars(
+                    duplicateDraft.meta?.starredCards || [],
+                    resolved,
+                    choices,
+                  ),
+                },
+              });
+              if (!initialDeck) localStorage.removeItem("flint-create-draft");
+              setDuplicateDraft(null);
+              notify(
+                `${resolved.length} cards saved · ${choices.filter((c) => c.action === "skip").length} duplicates skipped · ${choices.filter((c) => c.action === "replace").length} replaced`,
+              );
+            } catch {
+              setError(
+                "Could not save resolved cards. Your choices can be retried.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      )}
       <div className="page-title">
         <div>
           <h1>{initialDeck ? "Edit set" : "Create a set"}</h1>
@@ -1545,6 +1843,42 @@ function CreatePage({
         </div>
       )}
       <div className="editor panel">
+        <div className="button-row">
+          <button
+            className="secondary"
+            disabled={!canUndoCards || busy || !!removingCards.length}
+            onClick={undoCards}
+          >
+            Undo card edit
+          </button>
+          <details>
+            <summary>Paste / bulk add cards</summary>
+            <textarea
+              aria-label="Bulk cards"
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder="Term&#9;Definition"
+            />
+            <button
+              className="secondary"
+              onClick={() => {
+                const parsed = parseCardsDetailed(bulkText).cards;
+                setCards((old) => [
+                  ...old,
+                  ...parsed.map((card) => ({ ...blankDraftCard(), ...card })),
+                ]);
+                setBulkText("");
+                notify(
+                  `${parsed.length} cards added — Undo`,
+                  "success",
+                  undoCards,
+                );
+              }}
+            >
+              Add pasted cards
+            </button>
+          </details>
+        </div>
         <input
           className="title-input"
           placeholder="Set title"
@@ -1641,6 +1975,53 @@ function CreatePage({
                   <button
                     type="button"
                     className="secondary"
+                    aria-label={`Move card ${i + 1} up`}
+                    disabled={i === 0}
+                    onClick={() =>
+                      setCards((old) => {
+                        const next = [...old];
+                        [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                        return next;
+                      })
+                    }
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    aria-label={`Move card ${i + 1} down`}
+                    disabled={i === cards.length - 1}
+                    onClick={() =>
+                      setCards((old) => {
+                        const next = [...old];
+                        [next[i + 1], next[i]] = [next[i], next[i + 1]];
+                        return next;
+                      })
+                    }
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    aria-label={`Star editor card ${i + 1}`}
+                    aria-pressed={!!c.starred}
+                    onClick={() =>
+                      setCards((old) =>
+                        old.map((v) =>
+                          v.draftId === c.draftId
+                            ? { ...v, starred: !v.starred }
+                            : v,
+                        ),
+                      )
+                    }
+                  >
+                    {c.starred ? "★" : "☆"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
                     aria-label={`Duplicate card ${i + 1}`}
                     onClick={() =>
                       setCards((x) => [
@@ -1684,6 +2065,7 @@ function CreatePage({
                             setCards((x) =>
                               x.filter((v) => v.draftId !== c.draftId),
                             );
+                            notify("Card deleted — Undo", "success", undoCards);
                             setRemovingCards((ids) =>
                               ids.filter((id) => id !== c.draftId),
                             );
@@ -1761,7 +2143,7 @@ function CreatePage({
               );
             }}
           >
-            + Add card <kbd>Ctrl / ⌘ Enter</kbd>
+            + Add card <kbd>{modifierLabel()} Enter</kbd>
           </button>
         </div>
       </div>

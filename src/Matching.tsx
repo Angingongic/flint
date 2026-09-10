@@ -1,23 +1,25 @@
-import { useMemo, useState } from "react";
-import { shuffle } from "./learn-engine";
+import { useLayoutEffect, useRef, useState } from "react";
+import { GripVertical } from "lucide-react";
 import { StudyImage } from "./Study";
 export type MatchItem = { id: string; text: string; image?: string | null };
-export function pairItems(
-  pairs: Record<string, string>,
-  left: string,
-  right: string,
-) {
-  return {
-    ...Object.fromEntries(
-      Object.entries(pairs).filter(([l, r]) => l !== left && r !== right),
-    ),
-    [left]: right,
-  };
+export function moveAnswer(order: string[], from: number, to: number) {
+  if (
+    from < 0 ||
+    to < 0 ||
+    from >= order.length ||
+    to >= order.length ||
+    from === to
+  )
+    return order;
+  const next = [...order];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
 }
 export function Matching({
   left,
   right,
-  pairs,
+  order,
   onChange,
   disabled = false,
   reveal = false,
@@ -25,144 +27,149 @@ export function Matching({
 }: {
   left: MatchItem[];
   right: MatchItem[];
-  pairs: Record<string, string>;
-  onChange: (pairs: Record<string, string>) => void;
+  order: string[];
+  onChange: (order: string[]) => void;
   disabled?: boolean;
   reveal?: boolean;
   termFirst?: boolean;
 }) {
-  const columns = useMemo(() => [shuffle(left), shuffle(right)], [left, right]);
-  const [selected, setSelected] = useState<{ side: number; id: string } | null>(
-    null,
-  );
-  const choose = (side: number, id: string) => {
-    if (selected && selected.side !== side) {
-      onChange(
-        pairItems(
-          pairs,
-          side === 0 ? id : selected.id,
-          side === 1 ? id : selected.id,
-        ),
-      );
-      setSelected(null);
-    } else
-      setSelected(
-        selected?.id === id && selected.side === side ? null : { side, id },
-      );
+  const [dragged, setDragged] = useState<string | null>(null),
+    [target, setTarget] = useState<number | null>(null),
+    [announcement, setAnnouncement] = useState("");
+  const handles = useRef<Record<string, HTMLButtonElement | null>>({});
+  const focusAfterMove = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (focusAfterMove.current) {
+      handles.current[focusAfterMove.current]?.focus();
+      focusAfterMove.current = null;
+    }
+  }, [order]);
+  const move = (id: string, to: number) => {
+    if (disabled) return;
+    const next = moveAnswer(order, order.indexOf(id), to);
+    if (next === order) return;
+    focusAfterMove.current = id;
+    onChange(next);
+    setAnnouncement(`Moved answer to row ${to + 1} of ${left.length}`);
   };
-  const owners = left.filter((item) => pairs[item.id]).map((item) => item.id);
   return (
     <section
-      className="matching-board"
+      className="matching-board reorder-match"
       aria-label="Match terms and definitions"
     >
       <p>
-        Select an item in each column. Pair numbers show your matches, not
-        correctness. Select a different partner to change a pair.
+        Drag the answers into order beside the fixed prompts. Focus a drag
+        handle and use ↑ / ↓ to move an answer.
       </p>
-      <div className="matching-columns">
-        {columns.map((items, side) => (
-          <div
-            key={side}
-            role="group"
-            aria-label={(side === 0) === termFirst ? "Terms" : "Definitions"}
-          >
-            <h3>{(side === 0) === termFirst ? "Terms" : "Definitions"}</h3>
-            {items.map((item) => {
-              const owner =
-                side === 0
-                  ? pairs[item.id]
-                    ? item.id
-                    : undefined
-                  : owners.find((id) => pairs[id] === item.id);
-              return (
-                <button
-                  type="button"
-                  className={
-                    "secondary matching-item " +
-                    (selected?.id === item.id && selected.side === side
-                      ? "selected"
-                      : "")
-                  }
-                  aria-pressed={
-                    selected?.id === item.id && selected.side === side
-                  }
-                  disabled={disabled}
-                  key={item.id}
-                  onClick={() => choose(side, item.id)}
-                  onKeyDown={(e) => {
-                    if (
-                      ![
-                        "ArrowDown",
-                        "ArrowUp",
-                        "ArrowLeft",
-                        "ArrowRight",
-                      ].includes(e.key)
-                    )
-                      return;
-                    e.preventDefault();
-                    const group = e.currentTarget.parentElement!;
-                    const buttons = Array.from(
-                      group.querySelectorAll<HTMLButtonElement>("button"),
-                    );
-                    const i = buttons.indexOf(e.currentTarget);
-                    if (e.key === "ArrowDown" || e.key === "ArrowUp")
-                      buttons[
-                        (i +
-                          (e.key === "ArrowDown" ? 1 : -1) +
-                          buttons.length) %
-                          buttons.length
-                      ]?.focus();
-                    else
-                      group.parentElement?.children[side === 0 ? 1 : 0]
-                        .querySelectorAll<HTMLButtonElement>("button")
-                        [i]?.focus();
-                  }}
-                >
-                  <small>
-                    {owner ? `Pair ${owners.indexOf(owner) + 1}` : "Unpaired"}
-                  </small>
-                  <span>{item.text}</span>
-                  <StudyImage
-                    name={item.image}
-                    alt={side === 0 ? "Prompt image" : "Answer image"}
-                  />
-                  {reveal && owner && (
-                    <b>
-                      {pairs[owner] === owner ? "✓ Correct" : "✕ Incorrect"}
-                    </b>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        ))}
+      <div className="match-row match-heading">
+        <h3>{termFirst ? "Terms" : "Definitions"}</h3>
+        <h3>{termFirst ? "Definitions" : "Terms"}</h3>
       </div>
-      <div className="matching-pairs" aria-live="polite">
-        {owners.map((id, i) => (
-          <div key={id}>
-            <span>
-              Pair {i + 1}:{" "}
-              {left.find((x) => x.id === id)?.text || "Prompt image"} ↔{" "}
-              {right.find((x) => x.id === pairs[id])?.text || "Answer image"}
-            </span>
-            <button
-              type="button"
-              disabled={disabled}
-              className="secondary"
-              aria-label={`Unpair ${i + 1}`}
-              onClick={() => {
-                const next = { ...pairs };
-                delete next[id];
-                onChange(next);
-                setSelected(null);
+      {left.map((item, index) => {
+        const answer = right.find((r) => r.id === order[index]);
+        return (
+          <div
+            className={
+              "match-row " +
+              (target === index ? "drop-target " : "") +
+              (reveal
+                ? item.id === answer?.id
+                  ? "result-correct"
+                  : "result-wrong"
+                : "")
+            }
+            key={item.id}
+            onDragOver={(e) => {
+              if (dragged && !disabled) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setTarget(index);
+              }
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragged) move(dragged, index);
+              setDragged(null);
+              setTarget(null);
+            }}
+          >
+            <div className="match-prompt">
+              <small>Row {index + 1}</small>
+              <span>{item.text}</span>
+              <StudyImage name={item.image} alt={"Prompt " + (index + 1)} />
+            </div>
+            <div
+              className={
+                "match-answer-item " +
+                (dragged === answer?.id ? "dragging" : "")
+              }
+              draggable={!disabled}
+              onDragStart={(e) => {
+                if (!answer || disabled) {
+                  e.preventDefault();
+                  return;
+                }
+                setDragged(answer.id);
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", answer.id);
+              }}
+              onDragEnd={() => {
+                setDragged(null);
+                setTarget(null);
               }}
             >
-              Unpair
-            </button>
+              {answer && (
+                <>
+                  <button
+                    type="button"
+                    className="drag-handle"
+                    disabled={disabled}
+                    ref={(el) => {
+                      handles.current[answer.id] = el;
+                    }}
+                    aria-label={`Move ${answer.text || "image answer"}; row ${index + 1} of ${left.length}. Use up and down arrows.`}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                        e.preventDefault();
+                        move(answer.id, index + (e.key === "ArrowUp" ? -1 : 1));
+                      }
+                    }}
+                  >
+                    <GripVertical size={18} />
+                  </button>
+                  <div>
+                    <span>{answer.text}</span>
+                    <StudyImage
+                      name={answer.image}
+                      alt={"Answer in row " + (index + 1)}
+                    />
+                  </div>
+                </>
+              )}
+              {reveal && (
+                <div className="match-row-result">
+                  <b>{item.id === answer?.id ? "✓ Correct" : "✕ Incorrect"}</b>
+                  {item.id !== answer?.id && (
+                    <>
+                      <p>
+                        Correct answer:{" "}
+                        {right.find((r) => r.id === item.id)?.text || "Image"}
+                      </p>
+                      <StudyImage
+                        name={right.find((r) => r.id === item.id)?.image}
+                        alt="Correct answer visual"
+                      />
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
     </section>
   );
 }

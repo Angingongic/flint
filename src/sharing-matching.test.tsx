@@ -10,8 +10,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Matching, pairItems } from "./Matching";
-import { makeTest, testCorrect } from "./test-engine";
+import { Matching, moveAnswer } from "./Matching";
+import { makeTest, testCorrect, testRows } from "./test-engine";
 import { TestView } from "./TestView";
 import { newCard, type Deck } from "./lib";
 import { PortableSets, importConflicts } from "./PortableSet";
@@ -58,45 +58,44 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 function Board() {
-  const [pairs, setPairs] = useState<Record<string, string>>({});
+  const [order, setOrder] = useState(["b", "c", "a"]);
   return (
     <Matching
       left={cards.map((c) => ({ id: c.id, text: c.question }))}
       right={cards.map((c) => ({ id: c.id, text: c.answer }))}
-      pairs={pairs}
-      onChange={setPairs}
+      order={order}
+      onChange={setOrder}
     />
   );
 }
 describe("matching", () => {
-  it("reassigns partners one-to-one", () => {
-    expect(pairItems({ a: "a", b: "b" }, "a", "b")).toEqual({ a: "b" });
+  it("reorders answers one-to-one and bounds movement", () => {
+    expect(moveAnswer(["a", "b", "c"], 0, 2)).toEqual(["b", "c", "a"]);
+    expect(moveAnswer(["a", "b"], 0, -1)).toEqual(["a", "b"]);
   });
-  it("supports keyboard pairing, changing and unpairing without leaking correctness", async () => {
+  it("supports keyboard reordering with fixed prompts and no correctness leak", async () => {
     const user = userEvent.setup();
     render(<Board />);
-    const left = within(screen.getByRole("group", { name: "Terms" }));
-    const right = within(screen.getByRole("group", { name: "Definitions" }));
-    left.getByRole("button", { name: /café/ }).focus();
-    await user.keyboard("{Enter}");
-    right.getByRole("button", { name: /country/ }).focus();
-    await user.keyboard(" ");
-    expect(screen.getByText("Pair 1: café ↔ country")).toBeTruthy();
+    const before = Array.from(document.querySelectorAll(".match-prompt")).map(
+      (el) => el.textContent,
+    );
+    screen.getByRole("button", { name: /Move coffee/ }).focus();
+    await user.keyboard("{ArrowUp}{ArrowUp}");
+    expect(
+      screen.getByRole("button", { name: /Move coffee; row 1/ }),
+    ).toBeTruthy();
     expect(screen.queryByText(/✓ Correct|✕ Incorrect/)).toBeNull();
-    fireEvent.click(left.getByRole("button", { name: /café/ }));
-    fireEvent.click(right.getByRole("button", { name: /coffee/ }));
-    expect(screen.getByText("Pair 1: café ↔ coffee")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Unpair 1" }));
-    expect(screen.queryByText("Pair 1: café ↔ coffee")).toBeNull();
-    const first = left.getAllByRole("button")[0];
-    first.focus();
-    fireEvent.keyDown(first, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(left.getAllByRole("button")[1]);
+    expect(
+      Array.from(document.querySelectorAll(".match-prompt")).map(
+        (el) => el.textContent,
+      ),
+    ).toEqual(before);
   });
   it("grades every pair separately, with a shared candidate pool", () => {
     const questions = makeTest(cards, 3, ["matching"], "both");
     expect(questions.every((q) => q.prompt === q.card.question)).toBe(true);
-    for (const q of questions) {
+    expect(questions).toHaveLength(1);
+    for (const q of testRows(questions)) {
       expect(q.choices).toHaveLength(3);
       expect(testCorrect(q, q.card.id)).toBe(true);
       expect(testCorrect(q, "missing")).toBe(false);
@@ -109,15 +108,24 @@ describe("matching", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Matching" }));
     fireEvent.click(screen.getByRole("button", { name: "Generate test" }));
     expect(screen.queryByRole("combobox")).toBeNull();
-    const left = within(screen.getByRole("group", { name: "Terms" })),
-      right = within(screen.getByRole("group", { name: "Definitions" }));
-    for (const card of cards) {
-      fireEvent.click(
-        left.getByRole("button", { name: new RegExp(card.question) }),
-      );
-      fireEvent.click(
-        right.getByRole("button", { name: new RegExp(card.answer) }),
-      );
+    const prompts = Array.from(
+      document.querySelectorAll(".match-prompt span"),
+    ).map((el) => el.textContent);
+    for (let row = 0; row < prompts.length; row++) {
+      const card = cards.find((c) => c.question === prompts[row])!;
+      let button = screen.getByRole("button", {
+        name: new RegExp(`Move ${card.answer};`),
+      });
+      let index = screen
+        .getAllByRole("button", { name: /^Move .*; row/ })
+        .indexOf(button);
+      while (index > row) {
+        fireEvent.keyDown(button, { key: "ArrowUp" });
+        button = screen.getByRole("button", {
+          name: new RegExp(`Move ${card.answer};`),
+        });
+        index--;
+      }
     }
     expect(screen.queryByText("✓ Correct")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Submit test" }));
@@ -130,7 +138,7 @@ describe("matching", () => {
         expect.objectContaining({ kind: "matching", correct: true }),
       ]),
     );
-    expect(screen.getByText("You matched: café ↔ coffee")).toBeTruthy();
+    expect(screen.getAllByText("✓ Correct")).toHaveLength(3);
   });
 });
 describe("portable import preview", () => {

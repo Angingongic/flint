@@ -547,3 +547,158 @@ select,
   text-decoration-color: var(--accent, #ff6b35);
   text-underline-offset: 4px;
 }
+.match-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  margin: 10px 0;
+  border-radius: 12px;
+}
+.match-prompt,
+.match-answer-item {
+  padding: 14px;
+  border: 1px solid var(--border, #454552);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  background: var(--panel, #20212b);
+}
+.match-prompt small {
+  display: block;
+  opacity: 0.65;
+  margin-bottom: 6px;
+}
+.match-answer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  cursor: grab;
+}
+.match-answer-item > div:not(.match-row-result) {
+  flex: 1;
+  min-width: 0;
+}
+.match-answer-item.dragging {
+  opacity: 0.45;
+}
+.drag-handle {
+  cursor: grab;
+  flex-shrink: 0;
+  padding: 8px;
+  touch-action: none;
+}
+.match-row-result {
+  width: 100%;
+  border-top: 1px solid currentColor;
+  padding-top: 8px;
+}
+.match-row.result-correct .match-answer-item {
+  border-color: #62c88b;
+}
+.match-row.result-wrong .match-answer-item {
+  border-color: #ee776c;
+}
+.drop-target {
+  outline: 2px solid var(--accent, #ff6633);
+  outline-offset: 3px;
+}
+.match-row .study-image {
+  max-height: 160px;
+  width: 100%;
+  object-fit: contain;
+}
+.folder-shelf {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.folder-tile {
+  border: 1px solid var(--border, #454552);
+  padding: 12px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 160px;
+}
+.folder-tile small {
+  opacity: 0.65;
+}
+.deck-drop-wrap {
+  min-width: 0;
+  position: relative;
+  border-radius: 16px;
+}
+.deck-drop-wrap > .rich-deck {
+  height: 100%;
+}
+.folder-drop-hint {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 10px;
+  background: #29212c;
+  color: #fff;
+  border-radius: 10px;
+}
+.library-controls select,
+.folder-filter select {
+  color-scheme: dark;
+  background: #262731;
+  color: #f5f3f1;
+}
+.library-controls option,
+.folder-filter option {
+  background: #262731;
+  color: #f5f3f1;
+}
+[data-theme="light"] .library-controls select,
+[data-theme="light"] .folder-filter select {
+  color-scheme: light;
+  background: #fff;
+  color: #24242c;
+}
+.crop-preview {
+  width: 100%;
+  max-height: 42vh;
+  object-fit: contain;
+  background: #15151b;
+  border-radius: 12px;
+}
+.duplicate-list {
+  max-height: 50vh;
+  overflow: auto;
+  margin: 16px 0;
+}
+.duplicate-list > div {
+  border-bottom: 1px solid var(--border, #454552);
+  padding: 12px 0;
+}
+.duplicate-list select {
+  display: block;
+  margin-top: 10px;
+}
+.command-list {
+  display: grid;
+  gap: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}
+.command-list button {
+  text-align: left;
+}
+@media (max-width: 600px) {
+  .match-row {
+    gap: 6px;
+  }
+  .match-prompt,
+  .match-answer-item {
+    padding: 8px;
+  }
+  .drag-handle {
+    padding: 4px;
+  }
+}

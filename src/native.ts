@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { Card, Deck } from "./lib";
 import { normalizeCover } from "./covers";
+import { trashVictims } from "./editing";
 export const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const nativeCard = (c: Card) => ({
@@ -39,6 +40,7 @@ export async function exportFlint(deck: Deck) {
 }
 export async function loadNativeDecks() {
   if (!inTauri()) return null;
+  await invoke("cleanup_trash");
   const decks = await invoke<Deck[]>("list_decks");
   return decks.map((d) => ({
     ...normalizeCover(d),
@@ -47,6 +49,27 @@ export async function loadNativeDecks() {
       due: new Date(c.dueAt || 0) <= new Date(),
     })),
   }));
+}
+export async function updateDeckBatch(decks: Deck[]) {
+  if (inTauri())
+    await invoke("update_decks_details", {
+      decks: decks.map((deck) => ({
+        ...normalizeCover(deck),
+        favorite: !!deck.favorite,
+        lastStudied: deck.lastStudied || null,
+        cards: deck.cards.map(nativeCard),
+      })),
+    });
+}
+export async function pruneTrash(decks: Deck[]) {
+  if (inTauri()) {
+    await invoke("cleanup_trash");
+    const persisted = await invoke<Deck[]>("list_decks");
+    const ids = new Set(persisted.map((d) => d.id));
+    return decks.filter((d) => ids.has(d.id));
+  }
+  const removed = trashVictims(decks);
+  return decks.filter((d) => !removed.includes(d.id));
 }
 export async function saveNativeDeck(deck: Deck, source?: string) {
   if (!inTauri()) return;

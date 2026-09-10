@@ -430,6 +430,7 @@ fn import_package(package: &Package, db: &Db) -> Result<Deck, String> {
 #[tauri::command]
 pub fn import_flint(
     token: String,
+    choices: Option<Vec<DuplicateChoice>>,
     pending: State<PendingSet>,
     db: State<Db>,
 ) -> Result<Deck, String> {
@@ -440,9 +441,92 @@ pub fn import_flint(
     if id != &token {
         return Err("Preview expired; reopen the set".into());
     }
-    let deck = import_package(package, &db)?;
+    let resolved = resolve_choices(package, choices.unwrap_or_default())?;
+    let deck = import_package(&resolved, &db)?;
     *pending = None;
     Ok(deck)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DuplicateChoice {
+    card_id: String,
+    target_id: String,
+    action: String,
+}
+fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<Package, String> {
+    let mut deck = package.manifest.deck.clone();
+    let mut seen = HashSet::new();
+    for choice in choices {
+        if !seen.insert(choice.card_id.clone()) {
+            return Err("Repeated duplicate decision".into());
+        }
+        let from = deck
+            .cards
+            .iter()
+            .position(|c| c.id == choice.card_id)
+            .ok_or("Unknown duplicate card")?;
+        let to = deck
+            .cards
+            .iter()
+            .position(|c| c.id == choice.target_id)
+            .ok_or("Unknown earlier card")?;
+        if to >= from {
+            return Err("Duplicate target must be an earlier card".into());
+        }
+        match choice.action.as_str() {
+            "keep" => {}
+            "skip" | "replace" => {
+                let incoming = deck.cards.remove(from);
+                if choice.action == "replace" {
+                    let prior = &mut deck.cards[to];
+                    prior.question = incoming.question;
+                    prior.answer = incoming.answer;
+                    prior.question_image = incoming.question_image;
+                    prior.answer_image = incoming.answer_image;
+                }
+                if let Some(stars) = deck
+                    .meta
+                    .get_mut("starredCards")
+                    .and_then(|v| v.as_array_mut())
+                {
+                    let incoming_starred =
+                        stars.iter().any(|v| v.as_str() == Some(&choice.card_id));
+                    stars.retain(|v| v.as_str() != Some(&choice.card_id));
+                    if choice.action == "replace"
+                        && incoming_starred
+                        && !stars.iter().any(|v| v.as_str() == Some(&choice.target_id))
+                    {
+                        stars.push(choice.target_id.into());
+                    }
+                }
+            }
+            _ => return Err("Unknown duplicate decision".into()),
+        }
+    }
+    let names: HashSet<_> = deck
+        .cover_image
+        .iter()
+        .chain(
+            deck.cards
+                .iter()
+                .flat_map(|c| c.question_image.iter().chain(c.answer_image.iter())),
+        )
+        .cloned()
+        .collect();
+    Ok(Package {
+        manifest: Manifest {
+            format: package.manifest.format.clone(),
+            version: package.manifest.version,
+            deck,
+        },
+        media: package
+            .media
+            .iter()
+            .filter(|(name, _)| names.contains(*name))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -539,6 +623,46 @@ mod tests {
             .unwrap(),
             "față"
         );
+    }
+    #[test]
+    fn duplicate_choices_preserve_identity_history_and_media_before_fresh_import_ids() {
+        let mut package = fixture();
+        let mut duplicate = package.manifest.deck.cards[0].clone();
+        duplicate.id = "duplicate".into();
+        duplicate.question = "CAFÉ".into();
+        duplicate.repetitions = 0;
+        package.manifest.deck.cards.push(duplicate);
+        package.manifest.deck.meta["starredCards"] = serde_json::json!(["duplicate"]);
+        let resolved = resolve_choices(
+            &package,
+            vec![DuplicateChoice {
+                card_id: "duplicate".into(),
+                target_id: "card-original".into(),
+                action: "replace".into(),
+            }],
+        )
+        .unwrap();
+        validate(&resolved).unwrap();
+        assert_eq!(resolved.manifest.deck.cards.len(), 1);
+        assert_eq!(resolved.manifest.deck.cards[0].id, "card-original");
+        assert_eq!(resolved.manifest.deck.cards[0].question, "CAFÉ");
+        assert_eq!(resolved.manifest.deck.cards[0].repetitions, 2);
+        assert_eq!(
+            resolved.manifest.deck.meta["starredCards"][0],
+            "card-original"
+        );
+        assert_eq!(resolved.media, package.media);
+        let kept = resolve_choices(&package, vec![]).unwrap();
+        assert_eq!(kept.manifest.deck.cards.len(), 2);
+        assert!(resolve_choices(
+            &package,
+            vec![DuplicateChoice {
+                card_id: "card-original".into(),
+                target_id: "duplicate".into(),
+                action: "skip".into()
+            }]
+        )
+        .is_err());
     }
     #[test]
     fn rejects_invalid_version_missing_media_duplicate_ids_and_bad_metadata() {
