@@ -7,6 +7,7 @@ import { inTauri } from "./native";
 import { Modal } from "./ui";
 import { SetCover } from "./covers";
 import { notify } from "./motion";
+import { AudioPlayer } from "./Audio";
 import { DuplicateReview, duplicateCandidates } from "./DuplicateReview";
 import type { DuplicateChoice } from "./editing";
 export type PortablePreview = {
@@ -142,11 +143,20 @@ export function PortableSets({
         name,
         URL.createObjectURL(
           new Blob([new Uint8Array(bytes)], {
-            type: name.toLowerCase().endsWith("png")
-              ? "image/png"
-              : name.toLowerCase().endsWith("webp")
-                ? "image/webp"
-                : "image/jpeg",
+            type: /\.(mp3|m4a|wav|ogg)$/i.test(name)
+              ? (
+                  {
+                    mp3: "audio/mpeg",
+                    m4a: "audio/mp4",
+                    wav: "audio/wav",
+                    ogg: "audio/ogg",
+                  } as Record<string, string>
+                )[name.split(".").at(-1)!.toLowerCase()]
+              : name.toLowerCase().endsWith("png")
+                ? "image/png"
+                : name.toLowerCase().endsWith("webp")
+                  ? "image/webp"
+                  : "image/jpeg",
           }),
         ),
       ]),
@@ -223,10 +233,19 @@ export function PortableSets({
             {preview.deck.cards.slice(0, 5).map((c) => (
               <div key={c.id}>
                 <b>{c.question}</b>
+                {c.questionAudio && (
+                  <AudioPlayer src={urls[c.questionAudio]} label="Term audio" />
+                )}
                 {c.questionImage && (
                   <img src={urls[c.questionImage]} alt="Term visual" />
                 )}
                 <p>{c.answer}</p>
+                {c.answerAudio && (
+                  <AudioPlayer
+                    src={urls[c.answerAudio]}
+                    label="Definition audio"
+                  />
+                )}
                 {c.answerImage && (
                   <img src={urls[c.answerImage]} alt="Definition visual" />
                 )}

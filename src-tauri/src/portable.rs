@@ -59,18 +59,20 @@ fn refs(deck: &Deck) -> Vec<&str> {
     deck.cover_image
         .iter()
         .filter(|s| !s.starts_with("flint:preset/"))
-        .chain(
-            deck.cards
+        .chain(deck.cards.iter().flat_map(|c| {
+            c.question_image
                 .iter()
-                .flat_map(|c| c.question_image.iter().chain(c.answer_image.iter())),
-        )
+                .chain(c.answer_image.iter())
+                .chain(c.question_audio.iter())
+                .chain(c.answer_audio.iter())
+        }))
         .map(String::as_str)
         .collect()
 }
 fn validate(package: &Package) -> Result<(), String> {
     let manifest = &package.manifest;
     let deck = &manifest.deck;
-    if manifest.format != "flint-set" || manifest.version != 1 {
+    if manifest.format != "flint-set" || !matches!(manifest.version, 1 | 2) {
         return Err(
             "Unsupported Flint set format/version. Update Flint to open newer formats.".into(),
         );
@@ -156,8 +158,10 @@ fn validate(package: &Package) -> Result<(), String> {
             || !ids.insert(c.id.as_str())
             || c.question.len() > 100000
             || c.answer.len() > 100000
-            || (c.question.trim().is_empty() && c.question_image.is_none())
-            || (c.answer.trim().is_empty() && c.answer_image.is_none())
+            || (c.question.trim().is_empty()
+                && c.question_image.is_none()
+                && c.question_audio.is_none())
+            || (c.answer.trim().is_empty() && c.answer_image.is_none() && c.answer_audio.is_none())
         {
             return Err("Invalid card content or duplicate card ID".into());
         }
@@ -181,12 +185,45 @@ fn validate(package: &Package) -> Result<(), String> {
         return Err("Starred card references a missing card".into());
     }
     let references: HashSet<_> = refs(deck).into_iter().collect();
+    for c in &deck.cards {
+        for name in c.question_audio.iter().chain(c.answer_audio.iter()) {
+            if manifest.version < 2
+                || !package.media.get(name).is_some_and(|bytes| {
+                    audio::valid_audio(
+                        Path::new(name)
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(""),
+                        bytes,
+                    )
+                })
+            {
+                return Err("Invalid audio attachment or old package format".into());
+            }
+        }
+        for name in c.question_image.iter().chain(c.answer_image.iter()) {
+            if !package
+                .media
+                .get(name)
+                .is_some_and(|bytes| valid_image(name, bytes))
+            {
+                return Err("Invalid image attachment".into());
+            }
+        }
+    }
     let mut total = 0u64;
     for (name, bytes) in &package.media {
         total += bytes.len() as u64;
         if !safe_name(name)
             || bytes.len() as u64 > MAX_ENTRY
-            || !valid_image(name, bytes)
+            || !(valid_image(name, bytes)
+                || audio::valid_audio(
+                    Path::new(name)
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(""),
+                    bytes,
+                ))
             || !references.contains(name.as_str())
         {
             return Err("Unsafe, unsupported, or unreferenced media".into());
@@ -317,7 +354,15 @@ pub fn export_flint(path: String, deck: Deck, db: State<Db>) -> Result<(), Strin
         &Package {
             manifest: Manifest {
                 format: "flint-set".into(),
-                version: 1,
+                version: if deck
+                    .cards
+                    .iter()
+                    .any(|c| c.question_audio.is_some() || c.answer_audio.is_some())
+                {
+                    2
+                } else {
+                    1
+                },
                 deck,
             },
             media,
@@ -332,12 +377,13 @@ pub fn preview_flint(path: String, pending: State<PendingSet>) -> Result<Preview
     let preview_names: HashSet<_> = deck
         .cover_image
         .iter()
-        .chain(
-            deck.cards
+        .chain(deck.cards.iter().take(5).flat_map(|c| {
+            c.question_image
                 .iter()
-                .take(5)
-                .flat_map(|c| c.question_image.iter().chain(c.answer_image.iter())),
-        )
+                .chain(c.answer_image.iter())
+                .chain(c.question_audio.iter())
+                .chain(c.answer_audio.iter())
+        }))
         .collect();
     let media = package
         .media
@@ -401,11 +447,17 @@ fn import_package(package: &Package, db: &Db) -> Result<Deck, String> {
             file.write_all(bytes).map_err(|e| e.to_string())?;
             mapped.insert(name.clone(), new);
         }
-        for name in deck.cover_image.iter_mut().chain(
-            deck.cards
-                .iter_mut()
-                .flat_map(|c| c.question_image.iter_mut().chain(c.answer_image.iter_mut())),
-        ) {
+        for name in deck
+            .cover_image
+            .iter_mut()
+            .chain(deck.cards.iter_mut().flat_map(|c| {
+                c.question_image
+                    .iter_mut()
+                    .chain(c.answer_image.iter_mut())
+                    .chain(c.question_audio.iter_mut())
+                    .chain(c.answer_audio.iter_mut())
+            }))
+        {
             if let Some(new) = mapped.get(name) {
                 *name = new.clone();
             }
@@ -484,6 +536,8 @@ fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<P
                     prior.answer = incoming.answer;
                     prior.question_image = incoming.question_image;
                     prior.answer_image = incoming.answer_image;
+                    prior.question_audio = incoming.question_audio;
+                    prior.answer_audio = incoming.answer_audio;
                 }
                 if let Some(stars) = deck
                     .meta
@@ -507,11 +561,13 @@ fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<P
     let names: HashSet<_> = deck
         .cover_image
         .iter()
-        .chain(
-            deck.cards
+        .chain(deck.cards.iter().flat_map(|c| {
+            c.question_image
                 .iter()
-                .flat_map(|c| c.question_image.iter().chain(c.answer_image.iter())),
-        )
+                .chain(c.answer_image.iter())
+                .chain(c.question_audio.iter())
+                .chain(c.answer_audio.iter())
+        }))
         .cloned()
         .collect();
     Ok(Package {
@@ -625,6 +681,67 @@ mod tests {
         );
     }
     #[test]
+    fn audio_only_roundtrip_persistence_backup_and_cleanup() {
+        let dir = tempdir().unwrap();
+        let mut package = fixture();
+        package.manifest.version = 2;
+        let wav = b"RIFF0000WAVEfmt ".to_vec();
+        package.media.insert("voice.wav".into(), wav.clone());
+        package.manifest.deck.cards[0].question = String::new();
+        package.manifest.deck.cards[0].question_audio = Some("voice.wav".into());
+        package.manifest.deck.cards[0].answer_audio = Some("voice.wav".into());
+        let path = dir.path().join("audio.flint");
+        write_package(&path, &package).unwrap();
+        let parsed = read_package(&path).unwrap();
+        assert_eq!(parsed.media["voice.wav"], wav);
+        let media_dir = dir.path().join("media");
+        fs::create_dir(&media_dir).unwrap();
+        let db_path = dir.path().join("db.sqlite3");
+        let db = Db {
+            conn: Mutex::new(open_db(&db_path).unwrap()),
+            path: db_path.clone(),
+            media_dir: media_dir.clone(),
+        };
+        let deck = import_package(&parsed, &db).unwrap();
+        let name = deck.cards[0].question_audio.as_ref().unwrap().clone();
+        assert_eq!(fs::read(media_dir.join(&name)).unwrap(), wav);
+        db.conn
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA wal_checkpoint(FULL)")
+            .unwrap();
+        let backup = dir.path().join("audio.flintbackup");
+        write_backup(&db_path, Some(&media_dir), &backup, "0.1.5").unwrap();
+        let mut zip = ZipArchive::new(fs::File::open(backup).unwrap()).unwrap();
+        let mut bytes = Vec::new();
+        zip.by_name(&format!("media/{name}"))
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes, wav);
+        drop(db);
+        let mut conn = open_db(&db_path).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT question_audio FROM cards WHERE id=?",
+                [&deck.cards[0].id],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            name
+        );
+        let mut deleted = deck.clone();
+        deleted.meta["deletedAt"] = (Utc::now() - Duration::days(8)).to_rfc3339().into();
+        persist_details(&conn, &deleted).unwrap();
+        trash::prune(&mut conn, &media_dir, Utc::now()).unwrap();
+        assert!(!media_dir.join(name).exists());
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM cards", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+    #[test]
     fn duplicate_choices_preserve_identity_history_and_media_before_fresh_import_ids() {
         let mut package = fixture();
         let mut duplicate = package.manifest.deck.cards[0].clone();
@@ -672,7 +789,7 @@ mod tests {
             .insert("cover.png".into(), b"\x89PNG\r\n\x1a\n".to_vec());
         assert!(validate(&corrupt).is_err());
         let mut p = fixture();
-        p.manifest.version = 2;
+        p.manifest.version = 999;
         assert!(validate(&p).is_err());
         let mut p = fixture();
         p.media.remove("cover.png");

@@ -15,6 +15,8 @@ export type Card = {
   sourceLocation?: string | null;
   questionImage?: string | null;
   answerImage?: string | null;
+  questionAudio?: string | null;
+  answerAudio?: string | null;
 };
 export type Deck = {
   id: string;
@@ -63,11 +65,13 @@ export type CardDraft = {
   answer?: string;
   questionImage?: string | null;
   answerImage?: string | null;
+  questionAudio?: string | null;
+  answerAudio?: string | null;
 };
 export function isValidCardDraft(card: CardDraft) {
   return (
-    (!!card.question?.trim() || !!card.questionImage) &&
-    (!!card.answer?.trim() || !!card.answerImage)
+    (!!card.question?.trim() || !!card.questionImage || !!card.questionAudio) &&
+    (!!card.answer?.trim() || !!card.answerImage || !!card.answerAudio)
   );
 }
 export function canCreateDeck(title: string, cards: CardDraft[]) {

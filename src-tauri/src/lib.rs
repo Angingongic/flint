@@ -9,10 +9,12 @@ use std::{
     sync::Mutex,
 };
 use tauri::{Emitter, Manager, State};
+mod audio;
 mod portable;
 mod trash;
+use audio::save_audio_bytes;
 use portable::{cancel_flint, export_flint, import_flint, preview_flint, PendingSet};
-use trash::{cleanup_trash, update_decks_details};
+use trash::{cleanup_trash, permanently_remove, update_decks_details};
 struct OpenedSets(Mutex<Vec<String>>);
 fn queue_sets(app: &tauri::AppHandle, paths: Vec<String>) {
     if let Ok(mut pending) = app.state::<OpenedSets>().0.lock() {
@@ -34,7 +36,7 @@ fn opened_sets(state: State<OpenedSets>) -> Result<Vec<String>, String> {
 }
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +56,8 @@ pub struct Card {
     pub source_location: Option<String>,
     pub question_image: Option<String>,
     pub answer_image: Option<String>,
+    pub question_audio: Option<String>,
+    pub answer_audio: Option<String>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -109,7 +113,7 @@ fn open_db(path: &Path) -> Result<Connection, String> {
     Ok(c)
 }
 fn migrate(c: &Connection) -> Result<(), String> {
-    debug_assert_eq!(SCHEMA_VERSION, 6);
+    debug_assert_eq!(SCHEMA_VERSION, 7);
     let current: i64 = c
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
@@ -202,6 +206,15 @@ CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck_id);CREATE INDEX IF NOT 
         };
         c.execute_batch(&format!("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS media_cleanup(name TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS media_retired(deck_id TEXT NOT NULL REFERENCES decks(id) ON DELETE CASCADE,name TEXT NOT NULL,PRIMARY KEY(deck_id,name)); {position} PRAGMA user_version=6; COMMIT;")).map_err(|e|e.to_string())?;
     }
+    if current < 7 {
+        let has_audio:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('cards') WHERE name='question_audio')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if !has_audio {
+            c.execute_batch("BEGIN IMMEDIATE; ALTER TABLE cards ADD COLUMN question_audio TEXT; ALTER TABLE cards ADD COLUMN answer_audio TEXT; PRAGMA user_version=7; COMMIT;").map_err(|e|e.to_string())?;
+        } else {
+            c.pragma_update(None, "user_version", 7)
+                .map_err(|e| e.to_string())?;
+        }
+    }
     Ok(())
 }
 
@@ -272,6 +285,8 @@ fn row_card(r: &rusqlite::Row) -> rusqlite::Result<Card> {
         source_location: r.get(12)?,
         question_image: r.get(13)?,
         answer_image: r.get(14)?,
+        question_audio: r.get(15)?,
+        answer_audio: r.get(16)?,
     })
 }
 
@@ -298,7 +313,7 @@ fn list_decks(db: State<Db>) -> Result<Vec<Deck>, String> {
     for row in rows {
         let (id, title, subject, color, favorite, last_studied, cover_image, metadata, created_at) =
             row.map_err(|e| e.to_string())?;
-        let mut st=c.prepare("SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image FROM cards WHERE deck_id=? ORDER BY position,created_at,rowid").map_err(|e|e.to_string())?;
+        let mut st=c.prepare("SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio FROM cards WHERE deck_id=? ORDER BY position,created_at,rowid").map_err(|e|e.to_string())?;
         let cards = st
             .query_map([&id], row_card)
             .map_err(|e| e.to_string())?
@@ -358,7 +373,7 @@ fn export_text(path: String, text: String) -> Result<(), String> {
 
 fn persist_deck(c: &mut Connection, deck: &Deck, source: Option<&str>) -> Result<(), String> {
     let tx = c.transaction().map_err(|e| e.to_string())?;
-    tx.execute("INSERT OR IGNORE INTO media_retired(deck_id,name) SELECT id,cover_image FROM decks WHERE id=?1 AND cover_image IS NOT NULL UNION SELECT deck_id,question_image FROM cards WHERE deck_id=?1 AND question_image IS NOT NULL UNION SELECT deck_id,answer_image FROM cards WHERE deck_id=?1 AND answer_image IS NOT NULL",[&deck.id]).map_err(|e|e.to_string())?;
+    tx.execute("INSERT OR IGNORE INTO media_retired(deck_id,name) SELECT id,cover_image FROM decks WHERE id=?1 AND cover_image IS NOT NULL UNION SELECT deck_id,question_image FROM cards WHERE deck_id=?1 AND question_image IS NOT NULL UNION SELECT deck_id,answer_image FROM cards WHERE deck_id=?1 AND answer_image IS NOT NULL UNION SELECT deck_id,question_audio FROM cards WHERE deck_id=?1 AND question_audio IS NOT NULL UNION SELECT deck_id,answer_audio FROM cards WHERE deck_id=?1 AND answer_audio IS NOT NULL",[&deck.id]).map_err(|e|e.to_string())?;
     let now = Utc::now().to_rfc3339();
     tx.execute("INSERT INTO decks(id,title,subject,color,favorite,last_studied,cover_image,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,subject=excluded.subject,color=excluded.color,favorite=excluded.favorite,last_studied=excluded.last_studied,cover_image=excluded.cover_image,modified_at=excluded.modified_at",params![deck.id,deck.title,deck.subject,deck.color,deck.favorite,deck.last_studied,deck.cover_image,deck.created_at.as_deref().unwrap_or(&now),now]).map_err(|e|e.to_string())?;
     tx.execute(
@@ -387,8 +402,14 @@ fn persist_deck(c: &mut Connection, deck: &Deck, source: Option<&str>) -> Result
     for (position, x) in deck.cards.iter().enumerate() {
         tx.execute("INSERT INTO cards(id,deck_id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET question=excluded.question,answer=excluded.answer,status=excluded.status,accuracy=excluded.accuracy,due_at=excluded.due_at,interval_days=excluded.interval_days,ease=excluded.ease,repetitions=excluded.repetitions,lapses=excluded.lapses,last_reviewed=excluded.last_reviewed,source_name=excluded.source_name,source_location=excluded.source_location,question_image=excluded.question_image,answer_image=excluded.answer_image,modified_at=excluded.modified_at",params![x.id,deck.id,x.question,x.answer,x.status,x.accuracy,x.due_at,x.interval_days,x.ease,x.repetitions,x.lapses,x.last_reviewed,x.source_name,x.source_location,x.question_image,x.answer_image,now,now]).map_err(|e|e.to_string())?;
         tx.execute(
-            "UPDATE cards SET position=? WHERE id=? AND deck_id=?",
-            params![position as i64, x.id, deck.id],
+            "UPDATE cards SET position=?,question_audio=?,answer_audio=? WHERE id=? AND deck_id=?",
+            params![
+                position as i64,
+                x.question_audio,
+                x.answer_audio,
+                x.id,
+                deck.id
+            ],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -455,9 +476,9 @@ fn record_review(input: ReviewInput, db: State<Db>) -> Result<Schedule, String> 
 fn study_queue(kind: String, db: State<Db>) -> Result<Vec<Card>, String> {
     let c = db.conn.lock().map_err(|e| e.to_string())?;
     let sql = if kind == "weak" {
-        "SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location FROM cards ORDER BY (lapses*20+(100-accuracy)+CASE WHEN datetime(due_at)<=datetime('now') THEN 30 ELSE 0 END) DESC LIMIT 100"
+        "SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio FROM cards ORDER BY (lapses*20+(100-accuracy)+CASE WHEN datetime(due_at)<=datetime('now') THEN 30 ELSE 0 END) DESC LIMIT 100"
     } else {
-        "SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location FROM cards WHERE datetime(due_at)<=datetime('now') ORDER BY due_at LIMIT 100"
+        "SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio FROM cards WHERE datetime(due_at)<=datetime('now') ORDER BY due_at LIMIT 100"
     };
     let mut s = c.prepare(sql).map_err(|e| e.to_string())?;
     let cards = s
@@ -752,6 +773,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_decks,
             cleanup_trash,
+            permanently_remove,
             update_decks_details,
             save_deck,
             update_deck_details,
@@ -764,6 +786,7 @@ pub fn run() {
             extract_document,
             import_media,
             save_media_bytes,
+            save_audio_bytes,
             media_path,
             save_study_session,
             load_study_session,
@@ -874,6 +897,8 @@ mod tests {
             source_location: None,
             question_image: None,
             answer_image: None,
+            question_audio: None,
+            answer_audio: None,
         };
         let mut deck = Deck {
             id: "biology".into(),

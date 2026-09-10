@@ -4,6 +4,14 @@ pub fn prune(
     media: &Path,
     now: DateTime<Utc>,
 ) -> Result<Vec<String>, String> {
+    prune_with_target(conn, media, now, None)
+}
+fn prune_with_target(
+    conn: &mut Connection,
+    media: &Path,
+    now: DateTime<Utc>,
+    target: Option<&str>,
+) -> Result<Vec<String>, String> {
     let mut decks = {
         let mut st = conn
             .prepare("SELECT id,metadata FROM decks")
@@ -25,13 +33,17 @@ pub fn prune(
     let ids: Vec<_> = decks
         .into_iter()
         .enumerate()
-        .filter(|(i, (_, date))| *i >= 5 || now.signed_duration_since(*date) >= Duration::days(7))
+        .filter(|(i, (id, date))| {
+            target == Some(id.as_str())
+                || *i >= 5
+                || now.signed_duration_since(*date) >= Duration::days(7)
+        })
         .map(|(_, (id, _))| id)
         .collect();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut images = HashSet::<String>::new();
     for id in &ids {
-        let mut st=tx.prepare("SELECT cover_image FROM decks WHERE id=?1 UNION SELECT question_image FROM cards WHERE deck_id=?1 UNION SELECT answer_image FROM cards WHERE deck_id=?1 UNION SELECT name FROM media_retired WHERE deck_id=?1").map_err(|e|e.to_string())?;
+        let mut st=tx.prepare("SELECT cover_image FROM decks WHERE id=?1 UNION SELECT question_image FROM cards WHERE deck_id=?1 UNION SELECT answer_image FROM cards WHERE deck_id=?1 UNION SELECT question_audio FROM cards WHERE deck_id=?1 UNION SELECT answer_audio FROM cards WHERE deck_id=?1 UNION SELECT name FROM media_retired WHERE deck_id=?1").map_err(|e|e.to_string())?;
         for name in st
             .query_map([id], |r| r.get::<_, Option<String>>(0))
             .map_err(|e| e.to_string())?
@@ -78,7 +90,7 @@ pub fn prune(
                 .map_err(|e| e.to_string())?;
             continue;
         }
-        let used:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM decks WHERE cover_image=?1 UNION ALL SELECT 1 FROM cards WHERE question_image=?1 OR answer_image=?1)",[&name],|r|r.get(0)).map_err(|e|e.to_string())?;
+        let used:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM decks WHERE cover_image=?1 UNION ALL SELECT 1 FROM cards WHERE question_image=?1 OR answer_image=?1 OR question_audio=?1 OR answer_audio=?1)",[&name],|r|r.get(0)).map_err(|e|e.to_string())?;
         if !used {
             match fs::remove_file(media.join(&name)) {
                 Ok(()) => {}
@@ -95,6 +107,19 @@ pub fn prune(
 pub fn cleanup_trash(db: State<Db>) -> Result<Vec<String>, String> {
     let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
     prune(&mut conn, &db.media_dir, Utc::now())
+}
+#[tauri::command]
+pub fn permanently_remove(id: String, db: State<Db>) -> Result<(), String> {
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let meta: String = conn
+        .query_row("SELECT metadata FROM decks WHERE id=?", [&id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let meta: serde_json::Value = serde_json::from_str(&meta).map_err(|e| e.to_string())?;
+    if meta["deletedAt"].as_str().is_none() {
+        return Err("Only sets already in Trash can be permanently removed".into());
+    }
+    prune_with_target(&mut conn, &db.media_dir, Utc::now(), Some(&id))?;
+    Ok(())
 }
 #[tauri::command]
 pub fn update_decks_details(decks: Vec<Deck>, db: State<Db>) -> Result<(), String> {
@@ -208,6 +233,33 @@ mod tests {
                 .get::<_, i64>(0))
                 .unwrap(),
             0
+        );
+    }
+    #[test]
+    fn explicit_permanent_removal_keeps_other_unexpired_trash() {
+        let dir = tempdir().unwrap();
+        let mut conn = open_db(&dir.path().join("trash.db")).unwrap();
+        let now = Utc::now();
+        persist_deck(
+            &mut conn,
+            &fixture("one", Some(now), "flint:preset/ember"),
+            None,
+        )
+        .unwrap();
+        persist_deck(
+            &mut conn,
+            &fixture("two", Some(now), "flint:preset/ember"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            prune_with_target(&mut conn, dir.path(), now, Some("one")).unwrap(),
+            vec!["one"]
+        );
+        assert_eq!(
+            conn.query_row("SELECT id FROM decks", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "two"
         );
     }
     #[test]

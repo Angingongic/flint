@@ -6,11 +6,19 @@ export type TestQuestion = {
   kind: TestKind;
   prompt: string;
   promptImage?: string | null;
+  promptAudio?: string | null;
   answer: string;
   answerImage?: string | null;
-  choices: { id: string; text: string; image?: string | null }[];
+  answerAudio?: string | null;
+  choices: {
+    id: string;
+    text: string;
+    image?: string | null;
+    audio?: string | null;
+  }[];
   claim?: string;
   claimImage?: string | null;
+  claimAudio?: string | null;
   truth?: boolean;
   /** Matching is one question containing independently scored rows. */
   matchRows?: TestQuestion[];
@@ -24,6 +32,8 @@ export const cardKey = (card: Card) =>
     textKey(card.answer),
     card.questionImage || "",
     card.answerImage || "",
+    card.questionAudio || "",
+    card.answerAudio || "",
   ]);
 export function matchingGroupSize(remaining: number): number {
   if (remaining < 2) return 0;
@@ -74,7 +84,12 @@ export function makeTest(
       ),
     ]).map((c) => {
       const s = sides(c, reverse);
-      return { id: c.id, text: s.answer, image: s.answerImage };
+      return {
+        id: c.id,
+        text: s.answer,
+        image: s.answerImage,
+        audio: s.answerAudio,
+      };
     });
     const claimed =
       Math.random() < 0.5
@@ -85,11 +100,14 @@ export function makeTest(
       kind,
       prompt: side.prompt,
       promptImage: side.image,
+      promptAudio: side.audio,
       answer: side.answer,
       answerImage: side.answerImage,
+      answerAudio: side.answerAudio,
       choices: options,
       claim: claimed.text,
       claimImage: claimed.image,
+      claimAudio: claimed.audio,
       truth: claimed.id === card.id,
     };
   };
@@ -117,8 +135,16 @@ export function makeTest(
       answers = new Set<string>();
     for (const card of pool) {
       const side = sides(card, direction === "terms");
-      const p = JSON.stringify([textKey(side.prompt), side.image || ""]),
-        a = JSON.stringify([textKey(side.answer), side.answerImage || ""]);
+      const p = JSON.stringify([
+          textKey(side.prompt),
+          side.image || "",
+          side.audio || "",
+        ]),
+        a = JSON.stringify([
+          textKey(side.answer),
+          side.answerImage || "",
+          side.answerAudio || "",
+        ]);
       if (prompts.has(p) || answers.has(a)) {
         deferred.push(card);
         continue;
@@ -139,6 +165,7 @@ export function makeTest(
       id: q.card.id,
       text: q.answer,
       image: q.answerImage,
+      audio: q.answerAudio,
     }));
     rows.forEach((row) => (row.choices = choices));
     questions.push({

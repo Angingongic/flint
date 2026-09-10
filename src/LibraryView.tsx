@@ -23,6 +23,7 @@ import { Modal } from "./ui";
 import { Progress, notify } from "./motion";
 import { moveFolder } from "./editing";
 export type SetActions = {
+  remove?: (id: string) => Promise<void>;
   batch?: (decks: Deck[]) => Promise<void>;
   update: (deck: Deck) => Promise<void>;
   duplicate: (deck: Deck) => Promise<void>;
@@ -345,59 +346,18 @@ export function LibraryView({
     [folder, setFolder] = useState("");
   const [dragged, setDragged] = useState<string | null>(null),
     [over, setOver] = useState(""),
-    [proposal, setProposal] = useState<{
-      kind: "create" | "rename" | "delete";
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const [proposal, setProposal] = useState<{
+      kind: "create" | "rename" | "delete" | "permanent";
       ids: string[];
       old?: string;
     } | null>(null),
-    [folderName, setFolderName] = useState(""),
-    [folderBusy, setFolderBusy] = useState(false),
-    [folderError, setFolderError] = useState("");
-  const changeFolders = async (changes: Deck[]) => {
-    if (actions.batch) await actions.batch(changes);
-    else for (const deck of changes) await actions.update(deck);
-  };
-  const dropInto = async (name: string) => {
-    const id = dragged;
-    setDragged(null);
-    setOver("");
-    if (!id) return;
-    try {
-      await changeFolders(
-        moveFolder(decks, [id], name).filter((d) => d.id === id),
-      );
-      notify(name ? `Moved to ${name}` : "Moved out of folder");
-    } catch {
-      notify("Could not move set", "error");
-    }
-  };
-  const needle = query.trim().toLocaleLowerCase(),
-    global = globalQuery.trim().toLocaleLowerCase();
-  const folders = [
-    ...new Set(
-      decks
-        .filter(activeSet)
-        .map((d) => d.meta?.folder)
-        .filter(Boolean),
-    ),
-  ] as string[];
-  const shown = decks
-    .filter((d) =>
-      filter === "Trash"
-        ? !!d.meta?.deletedAt
-        : filter === "Archived"
-          ? !d.meta?.deletedAt && d.meta?.archived
-          : activeSet(d),
-    )
-    .filter((d) =>
-      [d.title, d.subject, d.meta?.folder, ...(d.meta?.tags || [])]
-        .join(" ")
-        .toLocaleLowerCase()
-        .includes(needle),
-    )
-    .filter(
-      (d) =>
-        !global ||
+    [name, setName] = useState("");
+  const matches = (d: Deck) =>
+    [query, globalQuery].every(
+      (q) =>
+        !q.trim() ||
         [
           d.title,
           d.subject,
@@ -406,17 +366,36 @@ export function LibraryView({
           ...d.cards.flatMap((c) => [c.question, c.answer]),
         ]
           .join(" ")
-          .toLowerCase()
-          .includes(global),
+          .toLocaleLowerCase()
+          .includes(q.trim().toLocaleLowerCase()),
+    );
+  const candidates = decks
+    .filter((d) =>
+      filter === "Trash"
+        ? !!d.meta?.deletedAt
+        : filter === "Archived"
+          ? !d.meta?.deletedAt && d.meta?.archived
+          : activeSet(d),
     )
     .filter((d) =>
       filter === "Favorites"
         ? d.favorite
         : filter === "Recent"
           ? !!(d.lastStudied || d.cards.some((c) => c.lastReviewed))
-          : filter === "Folders"
-            ? !!d.meta?.folder && (!folder || d.meta.folder === folder)
-            : true,
+          : true,
+    )
+    .filter(matches);
+  const folders =
+    folder || filter === "Trash"
+      ? []
+      : ([
+          ...new Set(candidates.map((d) => d.meta?.folder).filter(Boolean)),
+        ] as string[]);
+  const shown = candidates
+    .filter(
+      (d) =>
+        filter === "Trash" ||
+        (folder ? d.meta?.folder === folder : !d.meta?.folder),
     )
     .sort((a, b) =>
       sort === "name"
@@ -441,123 +420,215 @@ export function LibraryView({
                   "",
               ),
     );
+  const batch = async (changes: Deck[]) => {
+    if (actions.batch) await actions.batch(changes);
+    else for (const deck of changes) await actions.update(deck);
+  };
+  const editFolder = (kind: "rename" | "delete", old: string) => {
+    setError("");
+    setName(old);
+    setProposal({
+      kind,
+      old,
+      ids: decks
+        .filter((d) => !d.meta?.deletedAt && d.meta?.folder === old)
+        .map((d) => d.id),
+    });
+  };
+  const dropInto = async (target: string) => {
+    const id = dragged;
+    setDragged(null);
+    setOver("");
+    if (!id) return;
+    try {
+      await batch(
+        moveFolder(
+          decks.filter((d) => d.id === id),
+          [id],
+          target,
+        ),
+      );
+      notify(target ? "Moved to " + target : "Moved to Library");
+    } catch {
+      notify("Could not move set", "error");
+    }
+  };
+  const confirm = async () => {
+    if (!proposal || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const members = decks.filter((d) => proposal.ids.includes(d.id));
+      if (proposal.kind === "permanent") {
+        if (!actions.remove) throw Error("Permanent removal is unavailable");
+        await actions.remove(proposal.ids[0]);
+        notify("Set permanently removed");
+      } else if (proposal.kind === "delete") {
+        await batch(
+          members.map((d) => ({
+            ...d,
+            meta: { ...d.meta, deletedAt: new Date().toISOString() },
+          })),
+        );
+        setFolder("");
+      } else {
+        const next = name.trim();
+        if (!next) throw Error("Enter a folder name");
+        if (
+          decks.some(
+            (d) =>
+              !d.meta?.deletedAt &&
+              d.meta?.folder === next &&
+              next !== proposal.old,
+          )
+        )
+          throw Error("That folder already exists. Choose another name.");
+        await batch(moveFolder(members, proposal.ids, next));
+        if (proposal.kind === "rename" && folder === proposal.old)
+          setFolder(next);
+      }
+      setProposal(null);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="library-view">
       {proposal && (
         <Modal
           title={
-            proposal.kind === "delete"
-              ? `Delete folder “${proposal.old}”?`
-              : proposal.kind === "rename"
-                ? "Rename folder"
-                : "Create folder from these sets"
+            proposal.kind === "permanent"
+              ? "Permanently remove this set?"
+              : proposal.kind === "delete"
+                ? "Delete folder “" + proposal.old + "”?"
+                : proposal.kind === "rename"
+                  ? "Rename folder"
+                  : "Create folder"
           }
           onClose={() => {
-            if (!folderBusy) setProposal(null);
+            if (!busy) setProposal(null);
           }}
         >
-          {proposal.kind === "delete" ? (
+          {proposal.kind === "permanent" ? (
+            <p>
+              This permanently deletes the set, its cards, history and unshared
+              media. This cannot be undone.
+            </p>
+          ) : proposal.kind === "delete" ? (
             <p>
               All {proposal.ids.length} sets in this folder will move to Trash,
-              including archived sets. Each set counts as one Trash item. Trash
-              holds at most 5 sets for 7 days; excess oldest sets are
-              permanently deleted with their unshared images. The folder
-              disappears when empty.
+              including archived sets. Each set is one Trash item. Trash keeps
+              at most 5 sets for 7 days; excess oldest sets are permanently
+              deleted. The folder disappears when empty and returns when a
+              member is restored.
             </p>
           ) : (
-            <>
-              <p>
-                {proposal.ids.length} sets will be moved together. Cards, images
-                and study history are preserved.
-              </p>
-              <label>
-                Folder name
-                <input
-                  autoFocus
-                  value={folderName}
-                  onChange={(e) => setFolderName(e.target.value)}
-                />
-              </label>
-            </>
+            <label>
+              Folder name
+              <input
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </label>
           )}
-          {folderError && <p role="alert">{folderError}</p>}
+          {error && <p role="alert">{error}</p>}
           <div className="modal-actions">
             <button
               className="secondary"
-              disabled={folderBusy}
+              disabled={busy}
               onClick={() => setProposal(null)}
             >
               Cancel
             </button>
             <button
-              className={proposal.kind === "delete" ? "destructive" : "primary"}
-              disabled={
-                folderBusy || (proposal.kind !== "delete" && !folderName.trim())
+              className={
+                proposal.kind === "delete" || proposal.kind === "permanent"
+                  ? "destructive"
+                  : "primary"
               }
-              onClick={async () => {
-                setFolderBusy(true);
-                setFolderError("");
-                try {
-                  const members = decks.filter((d) =>
-                    proposal.ids.includes(d.id),
-                  );
-                  if (
-                    proposal.kind !== "delete" &&
-                    decks.some(
-                      (d) =>
-                        !d.meta?.deletedAt &&
-                        d.meta?.folder === folderName.trim() &&
-                        d.meta.folder !== proposal.old,
-                    )
-                  )
-                    throw Error(
-                      "That folder already exists. Choose another name or move the sets into it.",
-                    );
-                  await changeFolders(
-                    proposal.kind === "delete"
-                      ? members.map((d) => ({
-                          ...d,
-                          meta: {
-                            ...d.meta,
-                            deletedAt: new Date().toISOString(),
-                          },
-                        }))
-                      : moveFolder(members, proposal.ids, folderName),
-                  );
-                  setFolder("");
-                  setProposal(null);
-                } catch (e) {
-                  setFolderError(String(e));
-                } finally {
-                  setFolderBusy(false);
-                }
-              }}
+              disabled={
+                busy ||
+                ((proposal.kind === "create" || proposal.kind === "rename") &&
+                  !name.trim())
+              }
+              onClick={() => void confirm()}
             >
-              {proposal.kind === "delete"
-                ? "Delete folder and move sets to Trash"
-                : proposal.kind === "rename"
-                  ? "Rename folder"
-                  : "Create folder"}
+              {proposal.kind === "permanent"
+                ? "Permanently remove"
+                : proposal.kind === "delete"
+                  ? "Delete folder and move sets to Trash"
+                  : proposal.kind === "rename"
+                    ? "Rename folder"
+                    : "Create folder"}
             </button>
           </div>
         </Modal>
       )}
       <div className="page-title">
         <div>
-          <p className="eyebrow">YOUR KNOWLEDGE, GROWING</p>
-          <h1>Your Library</h1>
-          <p>Make room for your next discovery.</p>
+          {folder && (
+            <button
+              className={
+                "text-button " + (over === "root" ? "drop-target" : "")
+              }
+              onClick={() => setFolder("")}
+              onDragOver={(e) => {
+                if (dragged) {
+                  e.preventDefault();
+                  setOver("root");
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                void dropInto("");
+              }}
+            >
+              ← Library
+            </button>
+          )}
+          <p className="eyebrow">{folder ? "FOLDER" : "YOUR COLLECTION"}</p>
+          <h1>{folder || "Your Library"}</h1>
+          <p>
+            {folder
+              ? "A little knowledge, kept together."
+              : "All your sets. A place for every idea."}
+          </p>
         </div>
-        <button className="primary" onClick={create}>
-          <Plus size={17} />
-          New set
-        </button>
+        <div className="button-row">
+          {folder && (
+            <>
+              <button
+                className="secondary"
+                aria-label={"Rename folder " + folder}
+                onClick={() => editFolder("rename", folder)}
+              >
+                Rename
+              </button>
+              <button
+                className="icon"
+                aria-label={"Delete folder " + folder}
+                onClick={() => editFolder("delete", folder)}
+              >
+                <Trash2 size={18} />
+              </button>
+            </>
+          )}
+          <button className="primary" onClick={create}>
+            <Plus size={17} />
+            New set
+          </button>
+        </div>
       </div>
       <label className="library-search">
         <Search size={20} />
         <input
           aria-label="Search your sets"
-          placeholder="Search your sets..."
+          placeholder={
+            folder ? "Search this folder…" : "Search sets and folders…"
+          }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -569,18 +640,19 @@ export function LibraryView({
       </label>
       <div className="library-controls">
         <div className="filter-tabs">
-          {["All", "Recent", "Favorites", "Folders", "Archived", "Trash"].map(
-            (f) => (
-              <button
-                key={f}
-                aria-pressed={filter === f}
-                className={filter === f ? "selected" : ""}
-                onClick={() => setFilter(f)}
-              >
-                {f}
-              </button>
-            ),
-          )}
+          {["All", "Recent", "Favorites", "Archived", "Trash"].map((f) => (
+            <button
+              key={f}
+              aria-pressed={filter === f}
+              className={filter === f ? "selected" : ""}
+              onClick={() => {
+                setFilter(f);
+                setFolder("");
+              }}
+            >
+              {f}
+            </button>
+          ))}
         </div>
         <div className="button-row">
           <select
@@ -611,105 +683,68 @@ export function LibraryView({
           </button>
         </div>
       </div>
-      {filter === "Folders" && (
-        <label className="folder-filter">
-          <FolderOpen size={17} />
-          <select
-            aria-label="Filter folder"
-            value={folder}
-            onChange={(e) => setFolder(e.target.value)}
-          >
-            <option value="">All folders</option>
-            {folders.map((f) => (
-              <option key={f}>{f}</option>
-            ))}
-          </select>
-        </label>
-      )}
       <p className="result-count" role="status">
-        {shown.length} {shown.length === 1 ? "set" : "sets"}
-        {global && " · Global search: " + globalQuery}
+        {folders.length ? folders.length + " folders · " : ""}
+        {shown.length} sets
+        {filter === "Trash" ? " · Up to 7 days, 5 sets maximum" : ""}
       </p>
-      {filter !== "Trash" && (
-        <div className="folder-shelf" aria-label="Folder drop targets">
-          <div
-            className={"folder-tile " + (over === "root" ? "drop-target" : "")}
-            onDragOver={(e) => {
-              if (dragged) {
-                e.preventDefault();
-                setOver("root");
-              }
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              void dropInto("");
-            }}
-          >
-            <FolderOpen size={18} />
-            <span>Outside folders</span>
-            <small>Drop here to remove from folder</small>
-          </div>
-          {folders.map((name) => (
-            <div
-              key={name}
-              className={"folder-tile " + (over === name ? "drop-target" : "")}
+      <div className={"rich-deck-grid " + (view === "list" ? "list-view" : "")}>
+        {folders
+          .sort((a, b) => a.localeCompare(b))
+          .map((f) => (
+            <article
+              key={"folder:" + f}
+              className={"folder-card " + (over === f ? "drop-target" : "")}
               onDragOver={(e) => {
                 if (dragged) {
                   e.preventDefault();
-                  setOver(name);
+                  setOver(f);
                 }
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                void dropInto(name);
+                void dropInto(f);
               }}
             >
               <button
-                className="text-button"
-                onClick={() => {
-                  setFolder(name);
-                  setFilter("Folders");
-                }}
+                className="folder-open"
+                aria-label={"Open folder " + f}
+                onClick={() => setFolder(f)}
               >
-                <FolderOpen size={18} />
-                {name}
+                <FolderOpen size={44} />
+                <h3>{f}</h3>
+                <p>
+                  {
+                    decks.filter(
+                      (d) => !d.meta?.deletedAt && d.meta?.folder === f,
+                    ).length
+                  }{" "}
+                  sets
+                </p>
               </button>
-              <div className="button-row">
-                {(["rename", "delete"] as const).map((kind) => (
+              <details className="deck-menu">
+                <summary aria-label={"Actions for folder " + f}>
+                  <MoreHorizontal size={19} />
+                </summary>
+                <div className="menu-popover">
                   <button
-                    key={kind}
-                    className="text-button"
-                    aria-label={`${kind === "rename" ? "Rename" : "Delete"} folder ${name}`}
-                    onClick={() => {
-                      setFolderError("");
-                      setFolderName(name);
-                      setProposal({
-                        kind,
-                        old: name,
-                        ids: decks
-                          .filter(
-                            (d) =>
-                              !d.meta?.deletedAt && d.meta?.folder === name,
-                          )
-                          .map((d) => d.id),
-                      });
-                    }}
+                    aria-label={"Rename folder " + f}
+                    onClick={() => editFolder("rename", f)}
                   >
-                    {kind === "rename" ? "Rename" : "Delete"}
+                    <Edit3 />
+                    Rename
                   </button>
-                ))}
-              </div>
-            </div>
+                  <button
+                    aria-label={"Delete folder " + f}
+                    onClick={() => editFolder("delete", f)}
+                  >
+                    <Trash2 />
+                    Delete folder
+                  </button>
+                </div>
+              </details>
+            </article>
           ))}
-        </div>
-      )}
-      {filter !== "Trash" && (
-        <p className="muted">
-          Drag a set onto another to create a folder, or onto a folder to move
-          it. “Move to folder” in each set’s menu is the keyboard alternative.
-        </p>
-      )}
-      <div className={"rich-deck-grid " + (view === "list" ? "list-view" : "")}>
         {shown.map((d) =>
           filter === "Trash" ? (
             <article key={d.id} className="trash-row">
@@ -731,18 +766,29 @@ export function LibraryView({
                   days left
                 </p>
               </div>
-              <button
-                className="secondary"
-                onClick={() =>
-                  actions
-                    .update({ ...d, meta: { ...d.meta, deletedAt: null } })
-                    .then(() => notify("Set restored"))
-                    .catch(() => notify("Could not restore set", "error"))
-                }
-              >
-                <Undo2 size={16} />
-                Restore
-              </button>
+              <div className="button-row">
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    void actions
+                      .update({ ...d, meta: { ...d.meta, deletedAt: null } })
+                      .then(() => notify("Set restored"))
+                      .catch(() => notify("Could not restore set", "error"))
+                  }
+                >
+                  <Undo2 size={16} />
+                  Restore
+                </button>
+                <button
+                  className="text-button danger-text"
+                  onClick={() => {
+                    setError("");
+                    setProposal({ kind: "permanent", ids: [d.id] });
+                  }}
+                >
+                  Permanently remove
+                </button>
+              </div>
             </article>
           ) : (
             <div
@@ -751,10 +797,9 @@ export function LibraryView({
                 "deck-drop-wrap " + (over === d.id ? "drop-target" : "")
               }
               draggable
+              title="Drag onto a set to create a folder, or use Move to folder in the menu."
               onDragStart={(e) => {
-                if (
-                  (e.target as HTMLElement).closest(".deck-menu,input,select")
-                ) {
+                if ((e.target as Element).closest(".deck-menu,input,select")) {
                   e.preventDefault();
                   return;
                 }
@@ -775,8 +820,8 @@ export function LibraryView({
               onDrop={(e) => {
                 e.preventDefault();
                 if (dragged && dragged !== d.id) {
-                  setFolderName("New folder");
-                  setFolderError("");
+                  setError("");
+                  setName("New folder");
                   setProposal({ kind: "create", ids: [dragged, d.id] });
                 }
                 setDragged(null);
@@ -786,21 +831,25 @@ export function LibraryView({
               <RichDeckCard deck={d} start={start} actions={actions} />
               {over === d.id && (
                 <small className="folder-drop-hint">
-                  Release to choose a new folder name
+                  Create a folder together
                 </small>
               )}
             </div>
           ),
         )}
       </div>
-      {!shown.length && (
+      {!shown.length && !folders.length && (
         <div className="library-empty">
           <Search size={32} />
-          <h2>{query || global ? "No matching sets" : "Nothing here yet"}</h2>
+          <h2>
+            {query || globalQuery ? "No matching sets" : "Nothing here yet"}
+          </h2>
           <p>
             {filter === "Trash"
-              ? "Deleted sets can be restored here."
-              : "Try another filter, or create something worth learning."}
+              ? "Deleted sets appear here until restored or permanently removed."
+              : folder
+                ? "Move sets here from their menu or drop them onto this folder."
+                : "Create a set to begin."}
           </p>
         </div>
       )}

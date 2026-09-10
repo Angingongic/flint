@@ -9,12 +9,30 @@ export const editableTarget = (target: EventTarget | null) =>
 export const duplicateText = (value: string) =>
   value.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
 export function duplicateKind(
-  a: Pick<Card, "question" | "answer" | "questionImage" | "answerImage">,
-  b: Pick<Card, "question" | "answer" | "questionImage" | "answerImage">,
+  a: Pick<
+    Card,
+    | "question"
+    | "answer"
+    | "questionImage"
+    | "answerImage"
+    | "questionAudio"
+    | "answerAudio"
+  >,
+  b: Pick<
+    Card,
+    | "question"
+    | "answer"
+    | "questionImage"
+    | "answerImage"
+    | "questionAudio"
+    | "answerAudio"
+  >,
 ): "exact" | "near" | null {
   if (
     (a.questionImage || "") !== (b.questionImage || "") ||
-    (a.answerImage || "") !== (b.answerImage || "")
+    (a.answerImage || "") !== (b.answerImage || "") ||
+    (a.questionAudio || "") !== (b.questionAudio || "") ||
+    (a.answerAudio || "") !== (b.answerAudio || "")
   )
     return null;
   const aq = duplicateText(a.question),
@@ -48,6 +66,8 @@ export function resolveDuplicates<
     answer: string;
     questionImage?: string | null;
     answerImage?: string | null;
+    questionAudio?: string | null;
+    answerAudio?: string | null;
   },
 >(cards: T[], choices: DuplicateChoice[]): T[] {
   const output: T[] = [];
@@ -63,6 +83,8 @@ export function resolveDuplicates<
         answer: card.answer,
         questionImage: card.questionImage,
         answerImage: card.answerImage,
+        questionAudio: card.questionAudio,
+        answerAudio: card.answerAudio,
       };
   }
   return output;

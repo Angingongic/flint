@@ -16,6 +16,8 @@ const nativeCard = (c: Card) => ({
   sourceLocation: c.sourceLocation || null,
   questionImage: c.questionImage || null,
   answerImage: c.answerImage || null,
+  questionAudio: c.questionAudio || null,
+  answerAudio: c.answerAudio || null,
 });
 export async function exportFlint(deck: Deck) {
   if (!inTauri())
@@ -70,6 +72,9 @@ export async function pruneTrash(decks: Deck[]) {
   }
   const removed = trashVictims(decks);
   return decks.filter((d) => !removed.includes(d.id));
+}
+export async function permanentlyRemoveDeck(id: string) {
+  if (inTauri()) await invoke("permanently_remove", { id });
 }
 export async function saveNativeDeck(deck: Deck, source?: string) {
   if (!inTauri()) return;
@@ -164,6 +169,26 @@ export async function mediaUrl(name?: string | null) {
   if (!name) return "";
   if (!inTauri()) return name;
   return convertFileSrc(await invoke<string>("media_path", { name }));
+}
+export async function saveAudioBytes(file: File) {
+  const extension = file.name.split(".").at(-1)?.toLowerCase();
+  if (
+    !extension ||
+    !["mp3", "m4a", "wav", "ogg"].includes(extension) ||
+    file.size > 25 * 1024 * 1024
+  )
+    throw Error("Choose MP3, M4A, WAV or OGG audio up to 25 MB");
+  if (inTauri())
+    return invoke<string>("save_audio_bytes", {
+      data: Array.from(new Uint8Array(await file.arrayBuffer())),
+      extension,
+    });
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 export async function saveStudySession(
   deckId: string,

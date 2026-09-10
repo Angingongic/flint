@@ -45,8 +45,12 @@ export function TestView({
     scoreRef = useRef<HTMLDivElement>(null),
     reduced = useReducedMotion();
   const rows = useMemo(() => testRows(questions || []), [questions]);
-  const missing = rows.filter((q) => !answers[q.card.id]?.trim());
-  const correct = rows.filter((q) => testCorrect(q, answers[q.card.id]));
+  const missing = (questions || []).filter((q) =>
+    (q.matchRows || [q]).some((row) => !answers[row.card.id]?.trim()),
+  );
+  const questionCorrect = (q: TestQuestion) =>
+    (q.matchRows || [q]).every((row) => testCorrect(row, answers[row.card.id]));
+  const correct = (questions || []).filter(questionCorrect);
   const jump = (id: string) => {
     const group = questions?.find((q) =>
       q.matchRows?.some((row) => row.card.id === id),
@@ -77,7 +81,7 @@ export function TestView({
       await recordTestAttempt(
         deck.id,
         correct.length,
-        rows.length,
+        questions.length,
         rows.map((q) => ({
           cardId: q.card.id,
           kind: q.kind,
@@ -125,7 +129,8 @@ export function TestView({
         <span>{deck.title} · Test</span>
         {questions && (
           <b>
-            {rows.length - missing.length} / {rows.length} rows answered
+            {questions.length - missing.length} / {questions.length} questions
+            answered
           </b>
         )}
       </div>
@@ -234,23 +239,21 @@ export function TestView({
           {submitted && (
             <div ref={scoreRef} tabIndex={-1} className="test-score">
               <p className="eyebrow">TEST COMPLETE</p>
-              <h2>{Math.round((correct.length / rows.length) * 100)}%</h2>
+              <h2>{Math.round((correct.length / questions.length) * 100)}%</h2>
               <p>
-                {correct.length} correct · {rows.length - correct.length}{" "}
+                {correct.length} correct · {questions.length - correct.length}{" "}
                 incorrect
               </p>
               <p>
-                {missing.length} unanswered · {correct.length} / {rows.length}{" "}
-                correct
+                {missing.length} unanswered · {correct.length} /{" "}
+                {questions.length} correct
               </p>
               <div className="type-performance">
                 {(Object.keys(testLabels) as TestKind[])
                   .filter((kind) => questions.some((q) => q.kind === kind))
                   .map((kind) => {
-                    const items = rows.filter((q) => q.kind === kind),
-                      right = items.filter((q) =>
-                        testCorrect(q, answers[q.card.id]),
-                      ).length;
+                    const items = questions.filter((q) => q.kind === kind),
+                      right = items.filter(questionCorrect).length;
                     return (
                       <div key={kind}>
                         <span>{testLabels[kind]}</span>
@@ -266,7 +269,7 @@ export function TestView({
                   })}
               </div>
               <div className="button-row">
-                {correct.length < rows.length && (
+                {correct.length < questions.length && (
                   <button
                     className="primary"
                     onClick={() =>
@@ -357,6 +360,7 @@ export function TestView({
                       {!q.matchRows && (
                         <StudyImage
                           name={q.promptImage}
+                          audio={q.promptAudio}
                           alt="Question visual"
                         />
                       )}
@@ -375,6 +379,7 @@ export function TestView({
                             id: row.card.id,
                             text: row.prompt,
                             image: row.promptImage,
+                            audio: row.promptAudio,
                           }))}
                           right={q.choices}
                           termFirst={direction !== "terms"}
@@ -402,6 +407,7 @@ export function TestView({
                             {q.claim}
                             <StudyImage
                               name={q.claimImage}
+                              audio={q.claimAudio}
                               alt="Proposed answer"
                             />
                           </div>
@@ -432,6 +438,7 @@ export function TestView({
                               {c.text}
                               <StudyImage
                                 name={c.image}
+                                audio={c.audio}
                                 alt="Answer choice visual"
                               />
                             </label>
@@ -476,6 +483,7 @@ export function TestView({
                           )}
                           <StudyImage
                             name={q.answerImage}
+                            audio={q.answerAudio}
                             alt="Answer visual"
                           />
                         </div>
@@ -535,7 +543,8 @@ export function TestView({
           {!submitted && (
             <div className="exam-footer">
               <span>
-                {rows.length - missing.length} of {rows.length} answered
+                {questions.length - missing.length} of {questions.length}{" "}
+                questions answered
               </span>
               <DeferredLoading busy={saving} label="Saving result" />
               <button

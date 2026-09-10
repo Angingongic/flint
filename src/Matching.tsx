@@ -1,7 +1,12 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { StudyImage } from "./Study";
-export type MatchItem = { id: string; text: string; image?: string | null };
+export type MatchItem = {
+  id: string;
+  text: string;
+  image?: string | null;
+  audio?: string | null;
+};
 export function moveAnswer(order: string[], from: number, to: number) {
   if (
     from < 0 ||
@@ -37,6 +42,33 @@ export function Matching({
     [target, setTarget] = useState<number | null>(null),
     [announcement, setAnnouncement] = useState("");
   const handles = useRef<Record<string, HTMLButtonElement | null>>({});
+  const board = useRef<HTMLElement>(null),
+    pointer = useRef<{ id: string; pointerId: number } | null>(null),
+    positions = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const next = new Map<string, number>();
+    board.current
+      ?.querySelectorAll<HTMLElement>("[data-answer-id]")
+      .forEach((el) => {
+        const id = el.dataset.answerId!,
+          top = el.getBoundingClientRect().top,
+          old = positions.current.get(id);
+        next.set(id, top);
+        if (
+          old !== undefined &&
+          old !== top &&
+          !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+        )
+          el.animate?.(
+            [
+              { transform: `translateY(${old - top}px)` },
+              { transform: "translateY(0)" },
+            ],
+            { duration: 160, easing: "ease-out" },
+          );
+      });
+    positions.current = next;
+  }, [order]);
   const focusAfterMove = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (focusAfterMove.current) {
@@ -54,12 +86,12 @@ export function Matching({
   };
   return (
     <section
+      ref={board}
       className="matching-board reorder-match"
       aria-label="Match terms and definitions"
     >
-      <p>
-        Drag the answers into order beside the fixed prompts. Focus a drag
-        handle and use ↑ / ↓ to move an answer.
+      <p className="match-help">
+        Drag answers to align · ↑ / ↓ to move a focused answer
       </p>
       <div className="match-row match-heading">
         <h3>{termFirst ? "Terms" : "Definitions"}</h3>
@@ -94,16 +126,69 @@ export function Matching({
             }}
           >
             <div className="match-prompt">
-              <small>Row {index + 1}</small>
+              <small className="match-number" aria-label={`Row ${index + 1}`}>
+                {index + 1}
+              </small>
               <span>{item.text}</span>
-              <StudyImage name={item.image} alt={"Prompt " + (index + 1)} />
+              <StudyImage
+                name={item.image}
+                audio={item.audio}
+                alt={"Prompt " + (index + 1)}
+              />
             </div>
             <div
               className={
                 "match-answer-item " +
                 (dragged === answer?.id ? "dragging" : "")
               }
-              draggable={!disabled}
+              data-answer-id={answer?.id}
+              style={{ touchAction: "none" }}
+              onPointerDown={(e) => {
+                if (
+                  disabled ||
+                  !answer ||
+                  e.button > 0 ||
+                  (e.target as Element).closest(".audio-player")
+                )
+                  return;
+                pointer.current = { id: answer.id, pointerId: e.pointerId };
+                e.currentTarget.setPointerCapture?.(e.pointerId);
+                setDragged(answer.id);
+              }}
+              onPointerMove={(e) => {
+                if (
+                  !pointer.current ||
+                  pointer.current.pointerId !== e.pointerId
+                )
+                  return;
+                const rows = Array.from(
+                  board.current?.querySelectorAll<HTMLElement>(
+                    ".match-row:not(.match-heading)",
+                  ) || [],
+                );
+                const index = rows.findIndex((row) => {
+                  const r = row.getBoundingClientRect();
+                  return e.clientY >= r.top && e.clientY <= r.bottom;
+                });
+                if (index >= 0) {
+                  setTarget(index);
+                  move(pointer.current.id, index);
+                }
+              }}
+              onPointerUp={(e) => {
+                if (pointer.current?.pointerId === e.pointerId) {
+                  pointer.current = null;
+                  setDragged(null);
+                  setTarget(null);
+                  e.currentTarget.releasePointerCapture?.(e.pointerId);
+                }
+              }}
+              onPointerCancel={() => {
+                pointer.current = null;
+                setDragged(null);
+                setTarget(null);
+              }}
+              draggable={false}
               onDragStart={(e) => {
                 if (!answer || disabled) {
                   e.preventDefault();
@@ -141,6 +226,7 @@ export function Matching({
                     <span>{answer.text}</span>
                     <StudyImage
                       name={answer.image}
+                      audio={answer.audio}
                       alt={"Answer in row " + (index + 1)}
                     />
                   </div>
@@ -157,6 +243,7 @@ export function Matching({
                       </p>
                       <StudyImage
                         name={right.find((r) => r.id === item.id)?.image}
+                        audio={right.find((r) => r.id === item.id)?.audio}
                         alt="Correct answer visual"
                       />
                     </>

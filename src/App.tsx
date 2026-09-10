@@ -14,6 +14,7 @@ import {
   LibraryView,
   RichDeckCard,
   activeSet,
+  lastStudied,
   SetActions,
 } from "./LibraryView";
 import {
@@ -21,6 +22,7 @@ import {
   updateDeckBatch,
   pruneTrash,
   exportFlint,
+  permanentlyRemoveDeck,
 } from "./native";
 import {
   editableTarget,
@@ -33,6 +35,8 @@ import { DuplicateReview, duplicateCandidates } from "./DuplicateReview";
 import { PortableSets } from "./PortableSet";
 import { Commands, ShortcutHelp, modifierLabel } from "./Commands";
 import { ImageCrop } from "./ImageCrop";
+import { AudioField, AudioPlayer } from "./Audio";
+import { type WaveState, learnComplete } from "./learn-engine";
 import {
   Home,
   Library,
@@ -90,6 +94,7 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { UpdateProvider, UpdateSettings } from "./Updates";
 import { getVersion } from "@tauri-apps/api/app";
+import {displayVersion} from "./version";
 type Page =
   | "Home"
   | "Library"
@@ -103,7 +108,6 @@ type StudyMode =
 const nav = [
   ["Home", Home],
   ["Library", Library],
-  ["Study", GraduationCap],
   ["Import", Download],
   ["Create", Plus],
   ["Statistics", BarChart3],
@@ -250,9 +254,7 @@ export function App() {
   };
   const start = (d?: Deck, mode?: StudyMode) => {
     if (!d) {
-      window.location.hash = "Study";
-      setStudyDeck(null);
-      setPage("Study");
+      go("Library");
       return;
     }
     const hash = `#Study/${encodeURIComponent(d.id)}${mode ? "/" + mode : ""}`;
@@ -292,6 +294,11 @@ export function App() {
         }
       } else if (nav.some(([label]) => label === route)) {
         setPage(route as Page);
+        setStudyDeck(null);
+        setStudyMode(null);
+      } else if (route === "Study" || route === "Commands") {
+        window.history.replaceState(null, "", "#Library");
+        setPage("Library");
         setStudyDeck(null);
         setStudyMode(null);
       }
@@ -338,6 +345,12 @@ export function App() {
     go("Create");
   };
   const setActions: SetActions = {
+    remove: async (id) => {
+      if (!decksRef.current.find((d) => d.id === id)?.meta?.deletedAt)
+        throw Error("Only trashed sets can be removed");
+      await permanentlyRemoveDeck(id);
+      setDecks((old) => old.filter((d) => d.id !== id));
+    },
     edit: editSet,
     update: async (deck) => {
       const previous = decks.find((d) => d.id === deck.id);
@@ -418,6 +431,8 @@ export function App() {
           ...newCard(c.question, c.answer),
           questionImage: c.questionImage,
           answerImage: c.answerImage,
+          questionAudio: c.questionAudio,
+          answerAudio: c.answerAudio,
         })),
       });
       await saveNativeDeck(copy);
@@ -486,13 +501,10 @@ export function App() {
             <span>Flint</span>
           </div>
           <nav>
-            <button onClick={() => setCommands(true)} title="Command palette">
-              <Keyboard size={18} />
-              Commands
-            </button>
             {nav.map(([label, Icon]) => (
               <button
                 key={label}
+                aria-label={label}
                 className={page === label ? "active" : ""}
                 onClick={() => {
                   if (label === "Create") setEditingDeck(null);
@@ -501,7 +513,9 @@ export function App() {
               >
                 <Icon size={18} />
                 <span>{label}</span>
-                {label === "Create" && <kbd aria-hidden="true">{modifierLabel()} N</kbd>}
+                {label === "Create" && (
+                  <kbd aria-hidden="true">{modifierLabel()} N</kbd>
+                )}
               </button>
             ))}
           </nav>
@@ -646,7 +660,13 @@ export function App() {
                     />
                   )
                 ) : (
-                  <StudyHub decks={visibleDecks} start={start} go={go} />
+                  <LibraryView
+                    decks={decks}
+                    start={start}
+                    actions={setActions}
+                    create={() => go("Create")}
+                    globalQuery={query}
+                  />
                 ))}{" "}
               {page === "Import" && (
                 <ImportPage
@@ -692,6 +712,7 @@ export function App() {
               {page === "Statistics" && <Stats decks={visibleDecks} />}{" "}
               {page === "Settings" && (
                 <SettingsPage
+                  showShortcuts={() => setShortcutHelp(true)}
                   dark={dark}
                   setDark={setDark}
                   displayName={displayName}
@@ -723,181 +744,166 @@ function Dashboard({
   go,
 }: {
   decks: Deck[];
-  start: (d: Deck) => void;
-  go: (p: Page) => void;
+  start: (deck: Deck, mode?: StudyMode) => void;
+  go: (page: Page) => void;
 }) {
-  const cards = decks.flatMap((d) => d.cards),
-    dueList = dueCards(decks),
-    weakList = [...cards].sort(
-      (a, b) =>
-        (b.lapses || 0) * 20 +
-        (100 - b.accuracy) +
-        (b.due ? 30 : 0) -
-        ((a.lapses || 0) * 20 + (100 - a.accuracy) + (a.due ? 30 : 0)),
+  const [resume, setResume] = useState<string[]>([]);
+  useEffect(() => {
+    let active = true;
+    void Promise.all(
+      decks.map(async (d) => {
+        try {
+          const state = await loadStudySession<WaveState>(d.id, "learn");
+          return state && !learnComplete(state) ? d.id : null;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((ids) => {
+      if (active) setResume(ids.filter(Boolean) as string[]);
+    });
+    return () => {
+      active = false;
+    };
+  }, [decks]);
+  const recent = [...decks].sort((a, b) =>
+    (
+      b.lastStudied ||
+      b.cards
+        .map((c) => c.lastReviewed || "")
+        .sort()
+        .at(-1) ||
+      ""
+    ).localeCompare(
+      a.lastStudied ||
+        a.cards
+          .map((c) => c.lastReviewed || "")
+          .sort()
+          .at(-1) ||
+        "",
     ),
-    due = dueList.length,
-    mastered = cards.filter((c) => c.status === "Mastered").length;
-  const queue = (title: string, selected: typeof cards): Deck => ({
-    id: `queue-${title}`,
-    title,
-    subject: "Adaptive study",
-    color: "#EF6C3A",
-    cards: selected,
-  });
-  const reviews = cards.reduce((sum, card) => sum + (card.repetitions || 0), 0);
-  const reviewedCards = cards.filter((card) => (card.repetitions || 0) > 0);
-  const accuracy = reviewedCards.length
-    ? Math.round(
-        reviewedCards.reduce((sum, card) => sum + card.accuracy, 0) /
-          reviewedCards.length,
-      )
-    : null;
-  const weakStudied = weakList.filter((card) => (card.repetitions || 0) > 0);
-  if (!decks.length) {
-    return (
-      <div className="empty-state">
-        <div>
-          <Logo />
-          <h1>Welcome to Flint</h1>
-          <p>
-            Create your first study set or bring in existing cards. Your library
-            stays private and available offline on this device.
-          </p>
-          <div className="empty-actions">
-            <button className="primary" onClick={() => go("Create")}>
-              <Plus size={16} /> Create a set
-            </button>
-            <button className="secondary" onClick={() => go("Import")}>
-              <Upload size={16} /> Import cards
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  );
+  const next = recent.find((d) => resume.includes(d.id)) || recent[0],
+    cards = decks.flatMap((d) => d.cards),
+    due = dueCards(decks).length,
+    today = new Date().toDateString(),
+    studied = cards.filter(
+      (c) =>
+        c.lastReviewed && new Date(c.lastReviewed).toDateString() === today,
+    ).length;
+  const picks = recent
+    .filter(
+      (d) =>
+        d.id !== next?.id &&
+        (d.favorite || d.lastStudied || d.cards.some((c) => c.lastReviewed)),
+    )
+    .slice(0, 3);
   return (
-    <>
-      <div className="welcome">
+    <div className="home-dashboard">
+      <div className="page-title">
         <div>
-          <p className="eyebrow">
-            {new Intl.DateTimeFormat(undefined, {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-            }).format(new Date())}
-          </p>
-          <h1>Good {dayPart()}.</h1>
+          <p className="eyebrow">A LITTLE EVERY DAY</p>
+          <h1>
+            {decks.length ? "Good " + dayPart() + "." : "Welcome to Flint"}
+          </h1>
           <p>
-            You’ve got <b>{due} cards</b> ready for review. A quick session
-            keeps the streak alive.
-          </p>
-        </div>
-      </div>
-      <div className="continue">
-        <div>
-          <span className="pill">READY TO STUDY</span>
-          <h2>{decks[0].title}</h2>
-          <p>
-            {decks[0].cards.length} cards · {dueList.length} currently due
+            {decks.length
+              ? "Pick up where you left off."
+              : "Create your first set and make room for something new."}
           </p>
         </div>
         <div className="button-row">
-          <button
-            disabled={!dueList.length}
-            onClick={() => start(queue("Due cards", dueList))}
-          >
-            <Clock3 size={18} /> Study due cards
+          <button className="primary" onClick={() => go("Create")}>
+            <Plus size={16} />
+            New set
           </button>
-          <button
-            onClick={() => start(queue("Weak cards", weakList.slice(0, 30)))}
-          >
-            <Target size={18} /> Study weak cards
+          <button className="secondary" onClick={() => go("Import")}>
+            <Upload size={16} />
+            Import cards
           </button>
         </div>
       </div>
-      {(due > 0 || reviews > 0) && (
-        <div className="metrics">
-          <Metric
-            icon={Clock3}
-            label="Due today"
-            value={due}
-            note="Scheduled from your review history"
-            tone="orange"
-          />
-          {accuracy !== null && (
-            <Metric
-              icon={Target}
-              label="Accuracy"
-              value={`${accuracy}%`}
-              note="Across studied cards"
-              tone="blue"
-            />
-          )}
-          {reviews > 0 && (
-            <Metric
-              icon={BookOpen}
-              label="Reviews completed"
-              value={reviews}
-              note="Across your library"
-              tone="green"
-            />
-          )}
-          {mastered > 0 && (
-            <Metric
-              icon={Check}
-              label="Mastered"
-              value={mastered}
-              note="Cards scheduled to return later"
-              tone="amber"
-            />
-          )}
-        </div>
-      )}
-      <div className="section-head">
-        <div>
-          <h2>Recent sets</h2>
-          <p>Pick up where you left off</p>
-        </div>
-        <button onClick={() => go("Library")}>
-          View library <ArrowRight size={15} />
-        </button>
-      </div>
-      <div className="deck-grid">
-        {decks.map((d) => (
-          <DeckCard key={d.id} deck={d} start={start} />
-        ))}
-      </div>
-      {weakStudied.length > 0 && (
-        <div className="lower">
-          <div className="panel">
-            <div className="section-head">
-              <div>
-                <h2>Needs attention</h2>
-                <p>Your weakest cards across all sets</p>
-              </div>
+      {next && (
+        <section className="home-resume">
+          <SetCover deck={next} />
+          <div>
+            <p className="eyebrow">
+              {resume.includes(next.id)
+                ? "UNFINISHED LEARN SESSION"
+                : "CONTINUE STUDYING"}
+            </p>
+            <h2>{next.title}</h2>
+            <p>
+              {next.cards.length} cards · {lastStudied(next)}
+            </p>
+            <div className="button-row">
               <button
+                className="primary"
                 onClick={() =>
-                  start(queue("Weak cards", weakList.slice(0, 30)))
+                  start(next, resume.includes(next.id) ? "learn" : undefined)
                 }
               >
-                Study all <ArrowRight size={15} />
+                {resume.includes(next.id) ? "Resume Learn" : "Open set"}
+                <ArrowRight size={16} />
+              </button>
+              <button className="text-button" onClick={() => go("Library")}>
+                Browse library
               </button>
             </div>
-            {weakStudied.slice(0, 3).map((c) => (
-              <div className="weak" key={c.id}>
-                <span className="status-dot" />
-                <div>
-                  <b>{c.question}</b>
-                  <small>{c.answer}</small>
-                </div>
-                <span>{c.accuracy}%</span>
-                <ChevronDown size={16} />
-              </div>
+          </div>
+        </section>
+      )}
+      <div className="metrics">
+        <Metric
+          icon={Check}
+          label="Studied today"
+          value={studied}
+          note="Distinct cards reviewed today"
+          tone="green"
+        />
+        <Metric
+          icon={Clock3}
+          label="Ready for review"
+          value={due}
+          note="Across your active sets"
+          tone="orange"
+        />
+        <Metric
+          icon={BookOpen}
+          label="Mastered cards"
+          value={cards.filter((c) => c.status === "Mastered").length}
+          note="Knowledge that is sticking"
+          tone="blue"
+        />
+      </div>
+      {!!picks.length && (
+        <section>
+          <div className="section-head">
+            <div>
+              <h2>Back in your rhythm</h2>
+              <p>Recent and favorite sets</p>
+            </div>
+            <button className="text-button" onClick={() => go("Library")}>
+              View library →
+            </button>
+          </div>
+          <div className="deck-grid">
+            {picks.map((d) => (
+              <DeckCard key={d.id} deck={d} start={start} />
             ))}
           </div>
+        </section>
+      )}
+      {!next && (
+        <div className="library-empty">
+          <BookOpen size={36} />
+          <h2>Your next discovery starts here</h2>
+          <button className="primary" onClick={() => go("Create")}>
+            Create a set
+          </button>
         </div>
       )}
-    </>
+    </div>
   );
 }
 function Metric({
@@ -933,41 +939,6 @@ function DeckCard({
   edit?: (deck: Deck) => void;
 }) {
   return <RichDeckCard deck={deck} start={start} />;
-}
-function StudyHub({
-  decks,
-  start,
-  go,
-}: {
-  decks: Deck[];
-  start: (d: Deck, mode?: StudyMode) => void;
-  go: (p: Page) => void;
-}) {
-  return (
-    <>
-      <div className="page-title">
-        <div>
-          <p className="eyebrow">MAKE A LITTLE PROGRESS</p>
-          <h1>Ready to study?</h1>
-          <p>Choose a set, then find your rhythm.</p>
-        </div>
-      </div>
-      {decks.length ? (
-        <div className="rich-deck-grid">
-          {decks.map((deck) => (
-            <RichDeckCard key={deck.id} deck={deck} start={start} />
-          ))}
-        </div>
-      ) : (
-        <div className="library-empty">
-          <h2>Your next discovery starts here.</h2>
-          <button className="primary" onClick={() => go("Create")}>
-            Create a set
-          </button>
-        </div>
-      )}
-    </>
-  );
 }
 function TypedSession({
   deck,
@@ -1586,6 +1557,8 @@ function CreatePage({
     answer: "",
     questionImage: null as string | null,
     answerImage: null as string | null,
+    questionAudio: null as string | null,
+    answerAudio: null as string | null,
   });
   const [setId] = useState(initialDeck?.id || draft?.setId || uid());
   const [description, setDescription] = useState(
@@ -1605,6 +1578,8 @@ function CreatePage({
         answer: card.answer,
         questionImage: card.questionImage || null,
         answerImage: card.answerImage || null,
+        questionAudio: card.questionAudio || null,
+        answerAudio: card.answerAudio || null,
         starred: initialDeck.meta?.starredCards?.includes(card.id) || false,
       }))
     : Array.isArray(draft?.cards)
@@ -1616,6 +1591,8 @@ function CreatePage({
             answer?: string;
             questionImage?: string | null;
             answerImage?: string | null;
+            questionAudio?: string | null;
+            answerAudio?: string | null;
             starred?: boolean;
           }) => ({
             draftId: card.draftId || uid(),
@@ -1624,6 +1601,8 @@ function CreatePage({
             answer: card.answer || "",
             questionImage: card.questionImage || null,
             answerImage: card.answerImage || null,
+            questionAudio: card.questionAudio || null,
+            answerAudio: card.answerAudio || null,
             starred: !!card.starred,
           }),
         )
@@ -1645,6 +1624,8 @@ function CreatePage({
         answer: string;
         questionImage?: string | null;
         answerImage?: string | null;
+        questionAudio?: string | null;
+        answerAudio?: string | null;
         starred?: boolean;
       }[]
     >(initialCards.length ? initialCards : [blankDraftCard()]),
@@ -1714,6 +1695,8 @@ function CreatePage({
           id: c.cardId || uid(),
           questionImage: c.questionImage || null,
           answerImage: c.answerImage || null,
+          questionAudio: c.questionAudio || null,
+          answerAudio: c.answerAudio || null,
         })),
       };
       deck.meta.starredCards = complete.flatMap((card, index) =>
@@ -2105,6 +2088,26 @@ function CreatePage({
                         }}
                       />
                     </label>
+                    <AudioField
+                      label={side + " audio"}
+                      value={
+                        side === "question" ? c.questionAudio : c.answerAudio
+                      }
+                      onChange={(value) =>
+                        setCards((old) =>
+                          old.map((v) =>
+                            v.draftId === c.draftId
+                              ? {
+                                  ...v,
+                                  [side === "question"
+                                    ? "questionAudio"
+                                    : "answerAudio"]: value,
+                                }
+                              : v,
+                          ),
+                        )
+                      }
+                    />
                     <ImageField
                       label={side + " image"}
                       value={
@@ -2222,11 +2225,13 @@ function Stats({ decks }: { decks: Deck[] }) {
   );
 }
 function SettingsPage({
+  showShortcuts,
   dark,
   setDark,
   displayName,
   setDisplayName,
 }: {
+  showShortcuts: () => void;
   dark: boolean;
   setDark: (x: boolean) => void;
   displayName: string;
@@ -2245,6 +2250,18 @@ function SettingsPage({
         </div>
       </div>
       <div className="settings-grid">
+        <div className="panel setting">
+          <span>
+            <Keyboard />
+            <div>
+              <b>Keyboard shortcuts / Help</b>
+              <p>Find your way around Flint.</p>
+            </div>
+          </span>
+          <button className="secondary" onClick={showShortcuts}>
+            Keyboard shortcuts
+          </button>
+        </div>
         <div className="panel setting">
           <span>
             <BookOpen />
@@ -2334,7 +2351,7 @@ function AboutSettings() {
         <Logo />
         <div>
           <b>About Flint</b>
-          <p>Version {version || "Loading…"} · Local-first study application</p>
+          <p>Version {displayVersion(version) || "Loading…"} · Local-first study application</p>
         </div>
       </span>
     </div>

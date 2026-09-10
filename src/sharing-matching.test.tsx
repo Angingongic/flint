@@ -132,8 +132,8 @@ describe("matching", () => {
     await screen.findByText("100%");
     expect(recordTestAttempt).toHaveBeenCalledWith(
       deck.id,
-      3,
-      3,
+      1,
+      1,
       expect.arrayContaining([
         expect.objectContaining({ kind: "matching", correct: true }),
       ]),

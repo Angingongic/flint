@@ -5,6 +5,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { inTauri } from './native';
 import { Modal } from './ui';
+import {displayVersion} from './version';
 type Phase = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'installing' | 'installed';
 type Controls = { version: string; automatic: boolean; toggle: () => void; run: () => void; show: () => void; phase: Phase; message: string; hasUpdate: boolean };
 const Context = createContext<Controls | null>(null);
@@ -27,7 +28,7 @@ export function UpdateProvider({ children, blocked }: { children: ReactNode; blo
       const found = await check({ timeout: 15000 });
       current.current = found; setUpdate(found); setPhase(found ? 'available' : 'idle');
       if (found) { if (manual || !blockedNow.current) setVisible(true); }
-      else if (manual) setMessage(`You're up to date. Flint ${version || await getVersion()} is the latest version.`);
+      else if (manual) setMessage(`You're up to date. Flint ${displayVersion(version || await getVersion())} is the latest version.`);
     } catch { setPhase('idle'); if (manual) setMessage("Update couldn't be checked. Keep using Flint and try again later."); }
     finally { locked.current = false; }
   }
@@ -71,8 +72,8 @@ export function UpdateProvider({ children, blocked }: { children: ReactNode; blo
   const busy = ['checking', 'downloading', 'installing'].includes(phase);
   return <Context.Provider value={{version, automatic, toggle: () => { setAutomatic(!automatic); localStorage.setItem('flint-auto-updates', automatic ? 'off' : 'on'); }, run: () => void run(true), show: () => setVisible(true), phase, message, hasUpdate: !!update}}>
     {children}
-    {update && !visible && <aside className="update-notice" aria-live="polite"><span>Flint {update.version} {phase === 'ready' ? 'is ready — restart when you’re ready.' : 'is available.'}</span><button onClick={() => setVisible(true)}>View update</button></aside>}
-    {visible && update && <Modal title={`Flint ${update.version} is available`} onClose={() => { if (phase !== 'installing') setVisible(false); }}>
+    {update && !visible && <aside className="update-notice" aria-live="polite"><span>Flint {displayVersion(update.version)} {phase === 'ready' ? 'is ready — restart when you’re ready.' : 'is available.'}</span><button onClick={() => setVisible(true)}>View update</button></aside>}
+    {visible && update && <Modal title={`Flint ${displayVersion(update.version)} is available`} onClose={() => { if (phase !== 'installing') setVisible(false); }}>
       <div className="update-details"><h3>What's new</h3><p className="update-notes">{update.body || 'Maintenance and reliability improvements.'}</p>
         {phase === 'downloading' && <><p>Downloading and verifying update… {progress === null ? '' : `${progress}%`}</p><progress aria-label="Update download" max={100} value={progress ?? undefined} /></>}
         {['ready', 'installed'].includes(phase) && <p>Update ready — restart when you're ready. Flint needs to restart to finish.</p>}
@@ -90,7 +91,7 @@ export function UpdateProvider({ children, blocked }: { children: ReactNode; blo
 export function UpdateSettings() {
   const controls = useContext(Context);
   if (!controls) return null;
-  return <section className="panel update-settings" aria-label="Updates"><h3>Updates</h3><p>Flint version {controls.version || (inTauri() ? 'Loading…' : 'Development')}</p>
+  return <section className="panel update-settings" aria-label="Updates"><h3>Updates</h3><p>Flint version {displayVersion(controls.version) || (inTauri() ? 'Loading…' : 'Development')}</p>
     <label><input type="checkbox" checked={controls.automatic} onChange={controls.toggle} /> Automatic update checks</label>
     <p>Check automatically; never install or restart without your approval.</p>
     <button disabled={['checking', 'downloading', 'installing'].includes(controls.phase)} onClick={controls.run}>{controls.phase === 'checking' ? 'Checking…' : 'Check for updates'}</button>

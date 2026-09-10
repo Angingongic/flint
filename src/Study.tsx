@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Deck } from "./lib";
 import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
 import { editableTarget } from "./editing";
+import { AudioPlayer } from "./Audio";
 import {
   mediaUrl,
   loadStudySession,
@@ -39,9 +40,13 @@ import {
 export function StudyImage({
   name,
   alt,
+  audio,
+  active = true,
 }: {
   name?: string | null;
   alt: string;
+  audio?: string | null;
+  active?: boolean;
 }) {
   const [src, setSrc] = useState("");
   useEffect(() => {
@@ -58,14 +63,23 @@ export function StudyImage({
       active = false;
     };
   }, [name]);
-  return src ? (
-    <img
-      className="study-image"
-      src={src}
-      alt={alt}
-      onError={() => setSrc("")}
-    />
-  ) : null;
+  return (
+    <>
+      {src && (
+        <img
+          className="study-image"
+          src={src}
+          alt={alt}
+          onError={() => setSrc("")}
+        />
+      )}
+      <AudioPlayer
+        name={audio}
+        label={alt.replace("visual", "audio") || "Audio"}
+        active={active}
+      />
+    </>
+  );
 }
 function Back({ done }: { done: () => void }) {
   return (
@@ -224,9 +238,17 @@ export function SetOverview({
             <small>{String(index + 1).padStart(2, "0")}</small>
             <section className="term-copy">
               <p>{card.question}</p>
-              <StudyImage name={card.questionImage} alt="Question" />
+              <StudyImage
+                name={card.questionImage}
+                audio={card.questionAudio}
+                alt="Question"
+              />
               <p>{card.answer}</p>
-              <StudyImage name={card.answerImage} alt="Answer" />
+              <StudyImage
+                name={card.answerImage}
+                audio={card.answerAudio}
+                alt="Answer"
+              />
             </section>
             <div className="term-actions">
               <button
@@ -404,14 +426,28 @@ export function Flashcards({ deck, done }: { deck: Deck; done: () => void }) {
               if (e.key === "Enter") flip();
             }}
           >
-            <div className="viewer-face" aria-hidden={flipped}>
+            <div className="viewer-face" aria-hidden={flipped} inert={flipped}>
               <small>FRONT</small>
-              <StudyImage name={side.image} alt="Front visual" />
+              <StudyImage
+                name={side.image}
+                audio={side.audio}
+                active={!flipped}
+                alt="Front visual"
+              />
               <h1>{side.prompt}</h1>
             </div>
-            <div className="viewer-face viewer-back" aria-hidden={!flipped}>
+            <div
+              className="viewer-face viewer-back"
+              aria-hidden={!flipped}
+              inert={!flipped}
+            >
               <small>BACK</small>
-              <StudyImage name={side.answerImage} alt="Back visual" />
+              <StudyImage
+                name={side.answerImage}
+                audio={side.answerAudio}
+                active={flipped}
+                alt="Back visual"
+              />
               <h1>{side.answer}</h1>
             </div>
           </div>
@@ -637,7 +673,8 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
         (c) =>
           c.id !== card.id &&
           (sides(c, question.reverse).answer ||
-            sides(c, question.reverse).answerImage),
+            sides(c, question.reverse).answerImage ||
+            sides(c, question.reverse).answerAudio),
       ),
     ).slice(0, 3);
     choices.current = shuffle([card.id, ...distractors.map((c) => c.id)]);
@@ -954,45 +991,61 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                     {state.rounds + 1}
                   </small>
                   <h1>{side.prompt}</h1>
-                  <StudyImage name={side.image} alt="Question visual" />
+                  <StudyImage
+                    name={side.image}
+                    audio={side.audio}
+                    alt="Question visual"
+                  />
                   {question.kind === "choice" ? (
                     <div className="choice-grid">
                       {(response?.choices || choices.current).map((id) => {
                         const item = deck.cards.find((c) => c.id === id)!;
                         const choice = sides(item, question.reverse);
                         return (
-                          <button
-                            className={
-                              "secondary " +
-                              (response?.selected === id ? "selected " : "") +
-                              (response && id === card.id
-                                ? "answer-correct"
-                                : response?.selected === id &&
-                                    response.result === "INCORRECT"
-                                  ? "answer-wrong"
-                                  : "")
-                            }
-                            disabled={saving || !!response}
-                            key={id}
-                            onClick={() => answer(choice.answer, id)}
-                          >
-                            {choice.answer}
-                            {response && id === card.id && (
-                              <span className="choice-outcome">
-                                ✓ Correct answer
-                              </span>
-                            )}
-                            {response?.selected === id &&
-                              response.result === "INCORRECT" && (
+                          <div className="choice-with-audio" key={id}>
+                            <button
+                              className={
+                                "secondary " +
+                                (response?.selected === id ? "selected " : "") +
+                                (response && id === card.id
+                                  ? "answer-correct"
+                                  : response?.selected === id &&
+                                      response.result === "INCORRECT"
+                                    ? "answer-wrong"
+                                    : "")
+                              }
+                              disabled={saving || !!response}
+                              key={id}
+                              onClick={() => answer(choice.answer, id)}
+                              aria-label={
+                                choice.answer ||
+                                `Choose ${choice.answerAudio ? "audio" : "image"} answer ${choices.current.indexOf(id) + 1}`
+                              }
+                            >
+                              {choice.answer}
+                              {response && id === card.id && (
                                 <span className="choice-outcome">
-                                  ✕ Your answer
+                                  ✓ Correct answer
                                 </span>
                               )}
-                            <StudyImage
-                              name={choice.answerImage}
-                              alt="Choice visual"
+                              {response?.selected === id &&
+                                response.result === "INCORRECT" && (
+                                  <span className="choice-outcome">
+                                    ✕ Your answer
+                                  </span>
+                                )}
+                              <StudyImage
+                                name={choice.answerImage}
+                                alt="Choice visual"
+                              />
+                            </button>
+                            <AudioPlayer
+                              name={choice.answerAudio}
+                              label={
+                                "Choice " + (choices.current.indexOf(id) + 1)
+                              }
                             />
-                          </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -1023,12 +1076,13 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                   ) : (
                     <div>
                       <p>
-                        Recall the visual, then reveal it and check yourself.
+                        Recall the answer, then reveal it and check yourself.
                       </p>
                       <details key={signature}>
-                        <summary>Reveal answer image</summary>
+                        <summary>Reveal answer media</summary>
                         <StudyImage
                           name={side.answerImage}
+                          audio={side.answerAudio}
                           alt="Answer visual"
                         />
                         <div className="study-options">
@@ -1060,7 +1114,7 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                   )}
                   {!response && (
                     <button
-                      className="secondary"
+                      className="secondary learn-skip"
                       disabled={saving}
                       onClick={() => answer("", undefined, undefined, true)}
                     >
@@ -1097,6 +1151,7 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                           <CanonicalAnswer answer={side.answer} />
                           <StudyImage
                             name={side.answerImage}
+                            audio={side.answerAudio}
                             alt="Correct answer visual"
                           />
                           <p>
@@ -1113,6 +1168,7 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                             Correct answer: {side.answer}
                             <StudyImage
                               name={side.answerImage}
+                              audio={side.answerAudio}
                               alt="Correct answer visual"
                             />
                           </div>

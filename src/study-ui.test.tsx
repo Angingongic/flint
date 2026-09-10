@@ -100,15 +100,18 @@ describe("study interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Library" }));
     const search = screen.getByRole("textbox", { name: "Search your sets" });
     fireEvent.change(search, { target: { value: "chromatic" } });
-    expect(screen.getByRole("button", { name: "Open Colors" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open folder Art class" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open Colors" })).toBeNull();
     fireEvent.change(search, { target: { value: "no match" } });
     expect(screen.queryByRole("button", { name: "Open Colors" })).toBeNull();
     fireEvent.change(search, { target: { value: "Art class" } });
+    fireEvent.click(screen.getByRole("button",{name:"Open folder Art class"}));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose preset" }));
     fireEvent.click(screen.getByRole("button", { name: "Spectrum Gradient" }));
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(await screen.findByRole("button",{name:"Open folder Art class"}));
     await screen.findByRole("button", { name: "Open Colors" });
     expect(JSON.parse(localStorage.getItem("flint-decks")!)[0].coverImage).toBe(
       "flint:preset/spectrum",
@@ -121,6 +124,7 @@ describe("study interactions", () => {
     await screen.findByRole("button", { name: "Undo" });
     expect(screen.queryByRole("button", { name: "Open Colors" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    fireEvent.click(await screen.findByRole("button",{name:"Open folder Art class"}));
     await screen.findByRole("button", { name: "Open Colors" });
     fireEvent.click(screen.getByRole("button", { name: "Open Colors" }));
     fireEvent.click(screen.getByLabelText("More actions for Colors"));
@@ -141,6 +145,7 @@ describe("study interactions", () => {
     view.unmount();
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    fireEvent.click(screen.getByRole("button",{name:"Open folder Art class"}));
     expect(screen.getByRole("button", { name: "Open Colors" })).toBeTruthy();
     expect(
       JSON.parse(localStorage.getItem("flint-decks")!)[0].cards,

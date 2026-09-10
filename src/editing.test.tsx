@@ -169,8 +169,8 @@ describe("0.1.4 editing safety", () => {
   it("requires confirmation for drag-created folders, supports rename and warns before deleting all member sets", async () => {
     const batch = vi.fn();
     function Library() {
-      const [decks, setDecks] = useState([
-        deck,
+      const [decks, setDecks] = useState<Deck[]>([
+        {...deck,meta:{}},
         { ...deck, id: "b", title: "Two", meta: {} },
       ]);
       return (
@@ -204,7 +204,7 @@ describe("0.1.4 editing safety", () => {
       target: { value: "Together" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create folder" }));
-    await screen.findByRole("button", { name: "Rename folder Together" });
+    fireEvent.click(await screen.findByRole("button", { name: "Open folder Together" }));
     expect(batch.mock.calls[0][0]).toHaveLength(2);
     fireEvent.click(
       screen.getByRole("button", { name: "Rename folder Together" }),
