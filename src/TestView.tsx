@@ -1,3 +1,4 @@
+import { StudyScope } from "./StudyScope";
 import { useMemo, useRef, useState } from "react";
 import { Matching } from "./Matching";
 import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
@@ -16,7 +17,7 @@ import {
 import { recordTestAttempt } from "./native";
 import { StudyImage } from "./Study";
 import { DeferredLoading, Progress, useReducedMotion } from "./motion";
-export function TestView({
+function TestSession({
   deck,
   done,
   studyMissed,
@@ -129,8 +130,8 @@ export function TestView({
         <span>{deck.title} · Test</span>
         {questions && (
           <b>
-            {questions.length - missing.length} / {questions.length} questions
-            answered
+            {questions.length - missing.length} / {questions.length}{" "}
+            {questions.length === 1 ? "question" : "questions"} answered
           </b>
         )}
       </div>
@@ -150,7 +151,7 @@ export function TestView({
             <label>
               Cards to test
               <input
-                aria-label="Number of questions"
+                aria-label="Number of cards"
                 type="number"
                 min={1}
                 max={deck.cards.length}
@@ -158,6 +159,10 @@ export function TestView({
                 onChange={(e) => setCount(+e.target.value)}
               />
             </label>
+            <p>
+              Matching uses several cards per question. Each matching board
+              counts as one question.
+            </p>
             <fieldset>
               <legend>Question types</legend>
               {(Object.keys(testLabels) as TestKind[]).map((kind) => (
@@ -185,8 +190,8 @@ export function TestView({
                   setDirection(e.target.value as typeof direction)
                 }
               >
-                <option value="definitions">Definitions</option>
-                <option value="terms">Terms</option>
+                <option value="definitions">Back</option>
+                <option value="terms">Front</option>
                 <option value="both">Both</option>
               </select>
             </label>
@@ -234,8 +239,13 @@ export function TestView({
       ) : (
         <>
           <h1>
-            {submitted ? "Your results" : "Test"} · {questions.length} questions
+            {submitted ? "Your results" : "Test"} · {questions.length}{" "}
+            {questions.length === 1 ? "question" : "questions"}
           </h1>
+          <p>
+            {rows.length} {rows.length === 1 ? "card used" : "cards used"} ·
+            Each matching board is one question.
+          </p>
           {submitted && (
             <div ref={scoreRef} tabIndex={-1} className="test-score">
               <p className="eyebrow">TEST COMPLETE</p>
@@ -521,7 +531,11 @@ export function TestView({
           </div>
           {warning && (
             <div className="unanswered" role="alert">
-              <p>{missing.length} questions are unanswered.</p>
+              <p>
+                {missing.length}{" "}
+                {missing.length === 1 ? "question is" : "questions are"}{" "}
+                unanswered.
+              </p>
               <button
                 className="secondary"
                 onClick={() => {
@@ -544,7 +558,7 @@ export function TestView({
             <div className="exam-footer">
               <span>
                 {questions.length - missing.length} of {questions.length}{" "}
-                questions answered
+                {questions.length === 1 ? "question" : "questions"} answered
               </span>
               <DeferredLoading busy={saving} label="Saving result" />
               <button
@@ -559,5 +573,16 @@ export function TestView({
         </>
       )}
     </div>
+  );
+}
+export function TestView(props: {
+  deck: Deck;
+  done: () => void;
+  studyMissed: (deck: Deck) => void;
+}) {
+  return (
+    <StudyScope {...props}>
+      {(deck) => <TestSession {...props} deck={deck} />}
+    </StudyScope>
   );
 }

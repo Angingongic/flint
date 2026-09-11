@@ -165,3 +165,117 @@ button:disabled {
   font-size: 12px;
   color: var(--muted);
 }
+.study-scope {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.study-scope select {
+  width: auto;
+}
+.edit-card-sides {
+  position: relative;
+}
+.side-swap {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  z-index: 1;
+  font-size: 22px;
+}
+.insert-media > .deck-menu {
+  margin: 8px 0;
+  width: max-content;
+}
+.insert-media
+  .attachment:not(:has(.attachment-thumb))
+  .attachment-actions
+  > button:first-child,
+.insert-media .audio-field:not(:has(.audio-player)) .button-row {
+  display: none;
+}
+.insert-media .attachment,
+.insert-media .audio-field {
+  min-width: 0;
+}
+.media-placeholder {
+  display: block;
+  padding: 20px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.choice-with-audio {
+  min-width: 0;
+}
+.choice-with-audio > button {
+  width: 100%;
+}
+.study-image {
+  max-width: 100%;
+  object-fit: contain;
+}
+.audio-player {
+  max-width: 100%;
+  min-width: 0;
+}
+@media (max-width: 650px) {
+  .side-swap {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+}
+.folder-card {
+  position: relative;
+}
+.folder-open > svg {
+  color: var(--folder-color, #e99b50);
+}
+.folder-color {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+}
+.folder-breadcrumb {
+  margin-bottom: 14px;
+  font-size: 15px;
+}
+.drop-before {
+  border-top: 3px solid var(--accent, #ff6a32) !important;
+}
+.drop-after {
+  border-bottom: 3px solid var(--accent, #ff6a32) !important;
+}
+.deck-drop-wrap:active,
+.folder-card:active {
+  cursor: grab;
+}
+.menu-popover {
+  z-index: 20;
+}
+.insert-media > .deck-menu > summary {
+  width: auto;
+  height: auto;
+  min-width: 90px;
+  padding: 8px 10px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+}
+.edit-card-sides {
+  gap: 48px;
+}
+.insert-media .menu-popover {
+  left: 0;
+  right: auto;
+}
+.deck-menu .menu-popover {
+  max-height: min(400px, 60vh);
+  overflow-y: auto;
+}
+.insert-media .menu-popover {
+  position: static;
+  margin-top: 4px;
+}

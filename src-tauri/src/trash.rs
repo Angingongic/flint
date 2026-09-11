@@ -279,6 +279,7 @@ mod tests {
         .unwrap();
         deck.cards.reverse();
         deck.meta["folder"] = "Renamed".into();
+        deck.meta["pinned"] = true.into();
         persist_deck(&mut conn, &deck, None).unwrap();
         drop(conn);
         let conn = open_db(&path).unwrap();
@@ -290,6 +291,14 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(ids, vec!["second", "order-card"]);
+        let metadata: String = conn
+            .query_row("SELECT metadata FROM decks WHERE id = 'order'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+        assert_eq!(metadata["folder"], "Renamed");
+        assert_eq!(metadata["pinned"], true);
         assert_eq!(
             conn.query_row("SELECT count(*) FROM reviews", [], |r| r.get::<_, i64>(0))
                 .unwrap(),

@@ -1,6 +1,6 @@
 [package]
 name = "flint"
-version = "0.1.5"
+version = "0.1.6"
 description = "Fast, private, offline-first studying"
 authors = ["Flint"]
 edition = "2021"

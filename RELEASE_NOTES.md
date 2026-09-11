@@ -1,17 +1,18 @@
-# Flint 0.1.5
+# Flint 0.1.6
 
-## Flint 0.1.4a — UX completion pass
+## Library & Study Polish
 
-This release is displayed as **Flint 0.1.4a**. Its internal version is **0.1.5**, which correctly updates the already-published 0.1.4; 0.1.4-a.1 would be a downgrade.
+- Study All cards or Starred only in Flashcards, Learn and Test, with separate Learn session progress.
+- Clear cards-used versus generated-question counts. Each matching board remains one question.
+- Matching keeps normal touch scrolling outside the grip, keyboard movement and controlled edge scrolling while dragging.
+- Arrange sets and folders using Manual order; automatic sorts preserve that order.
+- Move sets between folders and the Library, or drop in a set's center to confirm folder creation.
+- Pin sets and folders, choose folder colors, and open the same actions with right-click or the existing menu.
+- Integrated folder breadcrumbs and browser back navigation.
+- Front/Back editor terminology, complete side swapping with Undo, and a shared Image/Audio Insert menu.
+- Media answer choices and image loading/error presentation improvements.
 
-- A matching board is one question throughout navigation, progress and scoring. Drag entire answers with mouse or touch, or use arrow keys. Compact numbered rows show placement results after submission.
-- Folders are inline Library cards. Open a folder to see its sets, drag sets between folders or back to Library, and rename/delete folders with confirmation.
-- Home is a focused resume dashboard; the redundant Study and Commands navigation items are removed. Keyboard help lives in Settings; Ctrl/Cmd+K still opens the palette.
-- Image-only and audio-only card sides are supported. Attach MP3, M4A, WAV or OGG audio with a styled, keyboard-accessible player, no autoplay, single-player playback and navigation cleanup. Codec support depends on the operating system; MP3 and PCM WAV are recommended.
-- Audio persists through save/reload, portable sets and full backups. Audio-containing .flint files use format v2 and require this release; existing v1 files remain readable.
-- Trash offers confirmed permanent removal, alongside Restore and the seven-day/five-set retention rules. Associated unshared media is cleaned up.
-- Refine Learn action spacing, matching density, folder tiles, audio players, image-only layouts and small-window accessibility.
+This release follows the already-published internal 0.1.5 (displayed as 0.1.4a). No new media formats, recording, autoplay behavior, database migrations, updater keys or release infrastructure are introduced.
+Manual order and folder appearance are stored locally on this installation; set pins use existing set metadata.
 
-Schema migration 7 adds nullable front/back audio references without changing existing card IDs, images or history. Updater keys and endpoints are unchanged.
-
-macOS packages remain ad-hoc signed and not notarized. Windows installers have no publisher signature. Gatekeeper/SmartScreen warnings may appear.
+Windows installers are not Authenticode-signed and may trigger SmartScreen. macOS builds are ad-hoc signed and not notarized; Gatekeeper restrictions remain. Updater artifacts are signed by the existing GitHub Actions signing configuration.

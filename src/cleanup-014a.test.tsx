@@ -37,7 +37,7 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/");
   vi.clearAllMocks();
   Element.prototype.scrollIntoView = vi.fn();
-  window.scrollTo=vi.fn();
+  window.scrollTo = vi.fn();
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(
     async function (this: HTMLMediaElement) {
       this.dispatchEvent(new Event("play"));
@@ -48,13 +48,11 @@ beforeEach(() => {
   ) {
     this.dispatchEvent(new Event("pause"));
   });
-  window.matchMedia = vi
-    .fn()
-    .mockReturnValue({
-      matches: false,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    });
+  window.matchMedia = vi.fn().mockReturnValue({
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
 });
 afterEach(() => {
   cleanup();
@@ -67,12 +65,12 @@ describe("0.1.4a completion", () => {
       fireEvent.click(screen.getByRole("checkbox", { name }));
     fireEvent.click(screen.getByRole("button", { name: "Generate test" }));
     expect(
-      screen.getByRole("heading", { name: "Test · 1 questions" }),
+      screen.getByRole("heading", { name: "Test · 1 question" }),
     ).toBeTruthy();
     expect(
       screen.getAllByRole("button", { name: /Go to question/ }),
     ).toHaveLength(1);
-    expect(screen.getByText("1 / 1 questions answered")).toBeTruthy();
+    expect(screen.getByText("1 / 1 question answered")).toBeTruthy();
     for (let i = 1; i <= 5; i++)
       expect(screen.getByLabelText("Row " + i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Submit test" }));
@@ -163,15 +161,20 @@ describe("0.1.4a completion", () => {
     fireEvent.dragStart(document.querySelector(".deck-drop-wrap")!, {
       dataTransfer: transfer,
     });
-    fireEvent.drop(screen.getByRole("button", { name: "← Library" }), {
-      dataTransfer: transfer,
-    });
+    fireEvent.drop(
+      screen.getByRole("button", { name: "Library / Languages" }),
+      {
+        dataTransfer: transfer,
+      },
+    );
     await waitFor(() =>
       expect(
         screen.queryByRole("button", { name: "Open Audio study" }),
       ).toBeNull(),
     );
-    fireEvent.click(screen.getByRole("button", { name: "← Library" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Library / Languages" }),
+    );
     expect(
       screen.getByRole("button", { name: "Open Audio study" }),
     ).toBeTruthy();
@@ -287,7 +290,13 @@ describe("0.1.4a completion", () => {
     };
     render(<Flashcards deck={mediaDeck} done={() => {}} />);
     await screen.findByRole("button", { name: "Play Front audio" });
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Play Front audio"}).hasAttribute("disabled")).toBe(false));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Play Front audio" })
+          .hasAttribute("disabled"),
+      ).toBe(false),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Play Front audio" }));
     await screen.findByRole("button", { name: "Pause Front audio" });
     fireEvent.keyDown(window, { key: "ArrowRight" });

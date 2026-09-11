@@ -35,6 +35,7 @@ export type Deck = {
     archived?: boolean;
     deletedAt?: string | null;
     starredCards?: string[];
+    pinned?: boolean;
   };
 };
 export const uid = () => crypto.randomUUID();

@@ -154,3 +154,23 @@ export function useUndoState<T>(initial: T) {
   };
   return [state, set, undo, history.current.length > 0] as const;
 }
+export function swapSides<
+  T extends {
+    question: string;
+    answer: string;
+    questionImage?: string | null;
+    answerImage?: string | null;
+    questionAudio?: string | null;
+    answerAudio?: string | null;
+  },
+>(card: T): T {
+  return {
+    ...card,
+    question: card.answer,
+    answer: card.question,
+    questionImage: card.answerImage,
+    answerImage: card.questionImage,
+    questionAudio: card.answerAudio,
+    answerAudio: card.questionAudio,
+  };
+}

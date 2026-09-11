@@ -1,3 +1,4 @@
+import { StudyScope } from "./StudyScope";
 import { useEffect, useRef, useState } from "react";
 import { Deck } from "./lib";
 import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
@@ -48,16 +49,18 @@ export function StudyImage({
   audio?: string | null;
   active?: boolean;
 }) {
-  const [src, setSrc] = useState("");
+  const [src, setSrc] = useState(""),
+    [imageError, setImageError] = useState(false);
   useEffect(() => {
     let active = true;
     setSrc("");
+    setImageError(false);
     mediaUrl(name)
       .then((url) => {
         if (active) setSrc(url);
       })
       .catch(() => {
-        if (active) setSrc("");
+        if (active) setImageError(true);
       });
     return () => {
       active = false;
@@ -65,12 +68,20 @@ export function StudyImage({
   }, [name]);
   return (
     <>
+      {name && !src && (
+        <span className="media-placeholder">
+          {imageError ? "Image unavailable" : "Loading image…"}
+        </span>
+      )}
       {src && (
         <img
           className="study-image"
           src={src}
           alt={alt}
-          onError={() => setSrc("")}
+          onError={() => {
+            setSrc("");
+            setImageError(true);
+          }}
         />
       )}
       <AudioPlayer
@@ -294,7 +305,7 @@ export function SetOverview({
   );
 }
 
-export function Flashcards({ deck, done }: { deck: Deck; done: () => void }) {
+function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
   const [cards, setCards] = useState(deck.cards),
     [index, setIndex] = useState(0),
     [flipped, setFlipped] = useState(false);
@@ -484,8 +495,8 @@ export function Flashcards({ deck, done }: { deck: Deck; done: () => void }) {
               setFlipped(false);
             }}
           >
-            <option value="terms">Terms</option>
-            <option value="definitions">Definitions</option>
+            <option value="terms">Front</option>
+            <option value="definitions">Back</option>
             <option value="mixed">Mixed</option>
           </select>
         </label>
@@ -516,7 +527,7 @@ export function Flashcards({ deck, done }: { deck: Deck; done: () => void }) {
   );
 }
 
-export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
+function WaveLearnSession({ deck, done }: { deck: Deck; done: () => void }) {
   const [state, setState] = useState<WaveState | null>(null),
     [loaded, setLoaded] = useState(false),
     [started, setStarted] = useState(false);
@@ -667,12 +678,11 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
     ? `${question.cardId}-${question.kind}-${state?.rounds}-${question.reverse}`
     : "";
   if (card && question && signature !== choiceKey.current) {
-    const currentAnswer = sides(card, question.reverse);
     const distractors = shuffle(
       deck.cards.filter(
         (c) =>
           c.id !== card.id &&
-          (sides(c, question.reverse).answer ||
+          (sides(c, question.reverse).answer.trim() ||
             sides(c, question.reverse).answerImage ||
             sides(c, question.reverse).answerAudio),
       ),
@@ -837,8 +847,8 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                     })
                   }
                 >
-                  <option value="terms">Terms</option>
-                  <option value="definitions">Definitions</option>
+                  <option value="terms">Front</option>
+                  <option value="definitions">Back</option>
                   <option value="mixed">Both</option>
                 </select>
               </label>
@@ -1022,7 +1032,12 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
                                 `Choose ${choice.answerAudio ? "audio" : "image"} answer ${choices.current.indexOf(id) + 1}`
                               }
                             >
-                              {choice.answer}
+                              {choice.answer.trim() ||
+                                (!choice.answerImage
+                                  ? choice.answerAudio
+                                    ? "Select this audio answer"
+                                    : "Answer unavailable"
+                                  : "")}
                               {response && id === card.id && (
                                 <span className="choice-outcome">
                                   ✓ Correct answer
@@ -1200,3 +1215,27 @@ export function WaveLearn({ deck, done }: { deck: Deck; done: () => void }) {
 }
 
 export { TestView as WorksheetTest } from "./TestView";
+export function Flashcards(props: { deck: Deck; done: () => void }) {
+  return (
+    <StudyScope {...props}>
+      {(deck) => <FlashcardsSession deck={deck} done={props.done} />}
+    </StudyScope>
+  );
+}
+export function WaveLearn(props: { deck: Deck; done: () => void }) {
+  return (
+    <StudyScope
+      {...props}
+      deck={{
+        ...props.deck,
+        cards: props.deck.cards.filter(
+          (c) =>
+            !!(c.question.trim() || c.questionImage || c.questionAudio) &&
+            !!(c.answer.trim() || c.answerImage || c.answerAudio),
+        ),
+      }}
+    >
+      {(deck) => <WaveLearnSession deck={deck} done={props.done} />}
+    </StudyScope>
+  );
+}

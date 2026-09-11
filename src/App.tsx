@@ -1,3 +1,5 @@
+import { InsertMedia } from "./InsertMedia";
+import { swapSides } from "./editing";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
 import { gradeAnswer, ignoreAccents } from "./lib";
@@ -94,7 +96,7 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { UpdateProvider, UpdateSettings } from "./Updates";
 import { getVersion } from "@tauri-apps/api/app";
-import {displayVersion} from "./version";
+import { displayVersion } from "./version";
 type Page =
   | "Home"
   | "Library"
@@ -2063,18 +2065,31 @@ function CreatePage({
                 </div>
               </div>
               <div className="edit-card-sides">
+                <button
+                  type="button"
+                  className="side-swap icon"
+                  title="Swap front and back"
+                  aria-label="Swap front and back"
+                  onClick={() =>
+                    setCards((old) =>
+                      old.map((v) =>
+                        v.draftId === c.draftId ? swapSides(v) : v,
+                      ),
+                    )
+                  }
+                >
+                  ⇄
+                </button>
                 {(["question", "answer"] as const).map((side) => (
                   <section key={side}>
                     <label>
-                      {side === "question"
-                        ? "TERM / QUESTION"
-                        : "DEFINITION / ANSWER"}
+                      {side === "question" ? "Front" : "Back"}
                       <textarea
                         value={c[side]}
                         placeholder={
                           side === "question"
-                            ? "Enter a term or question"
-                            : "Enter a definition or answer"
+                            ? "Add front text"
+                            : "Add back text"
                         }
                         onChange={(e) => {
                           const value = e.target.value;
@@ -2088,46 +2103,48 @@ function CreatePage({
                         }}
                       />
                     </label>
-                    <AudioField
-                      label={side + " audio"}
-                      value={
-                        side === "question" ? c.questionAudio : c.answerAudio
-                      }
-                      onChange={(value) =>
-                        setCards((old) =>
-                          old.map((v) =>
-                            v.draftId === c.draftId
-                              ? {
-                                  ...v,
-                                  [side === "question"
-                                    ? "questionAudio"
-                                    : "answerAudio"]: value,
-                                }
-                              : v,
-                          ),
-                        )
-                      }
-                    />
-                    <ImageField
-                      label={side + " image"}
-                      value={
-                        side === "question" ? c.questionImage : c.answerImage
-                      }
-                      onChange={(value) =>
-                        setCards((x) =>
-                          x.map((v) =>
-                            v.draftId === c.draftId
-                              ? {
-                                  ...v,
-                                  [side === "question"
-                                    ? "questionImage"
-                                    : "answerImage"]: value,
-                                }
-                              : v,
-                          ),
-                        )
-                      }
-                    />
+                    <InsertMedia>
+                      <AudioField
+                        label={side + " audio"}
+                        value={
+                          side === "question" ? c.questionAudio : c.answerAudio
+                        }
+                        onChange={(value) =>
+                          setCards((old) =>
+                            old.map((v) =>
+                              v.draftId === c.draftId
+                                ? {
+                                    ...v,
+                                    [side === "question"
+                                      ? "questionAudio"
+                                      : "answerAudio"]: value,
+                                  }
+                                : v,
+                            ),
+                          )
+                        }
+                      />
+                      <ImageField
+                        label={side + " image"}
+                        value={
+                          side === "question" ? c.questionImage : c.answerImage
+                        }
+                        onChange={(value) =>
+                          setCards((x) =>
+                            x.map((v) =>
+                              v.draftId === c.draftId
+                                ? {
+                                    ...v,
+                                    [side === "question"
+                                      ? "questionImage"
+                                      : "answerImage"]: value,
+                                  }
+                                : v,
+                            ),
+                          )
+                        }
+                      />
+                    </InsertMedia>
                   </section>
                 ))}
               </div>
@@ -2351,7 +2368,10 @@ function AboutSettings() {
         <Logo />
         <div>
           <b>About Flint</b>
-          <p>Version {displayVersion(version) || "Loading…"} · Local-first study application</p>
+          <p>
+            Version {displayVersion(version) || "Loading…"} · Local-first study
+            application
+          </p>
         </div>
       </span>
     </div>

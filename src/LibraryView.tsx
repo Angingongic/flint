@@ -1,3 +1,10 @@
+import {
+  loadLibraryPreferences,
+  saveLibraryPreferences,
+  reorderItems,
+  orderedSets,
+  type LibraryPreferences,
+} from "./library-order";
 import { useEffect, useRef, useState } from "react";
 import {
   Archive,
@@ -15,6 +22,8 @@ import {
   Plus,
   ArrowUpRight,
   FolderOpen,
+  Pin,
+  ArrowLeft,
 } from "lucide-react";
 import { Deck } from "./lib";
 import { exportDeckText } from "./native";
@@ -112,6 +121,20 @@ export function DeckMenu({
           >
             <Star />
             {deck.favorite ? "Unfavorite" : "Favorite"}
+          </button>
+          <button
+            disabled={busy}
+            onClick={() =>
+              run(() =>
+                actions.update({
+                  ...deck,
+                  meta: { ...deck.meta, pinned: !deck.meta?.pinned },
+                }),
+              )
+            }
+          >
+            <Pin />
+            {deck.meta?.pinned ? "Unpin" : "Pin"}
           </button>
           <button
             disabled={busy}
@@ -265,7 +288,7 @@ export function RichDeckCard({
   const mastered = deck.cards.filter((c) => c.status === "Mastered").length;
   const studied = deck.cards.some((c) => (c.repetitions || 0) > 0);
   return (
-    <article className="rich-deck">
+    <article className="rich-deck" onContextMenu={openItemMenu}>
       <button
         className="deck-art-button"
         aria-label={"Open " + deck.title}
@@ -276,6 +299,7 @@ export function RichDeckCard({
       <div className="rich-deck-body">
         <div className="rich-deck-top">
           <h3>
+            {deck.meta?.pinned && <Pin size={13} aria-label="Pinned set" />}
             <button onClick={() => start(deck)}>{deck.title}</button>
           </h3>
           {actions && <DeckMenu deck={deck} actions={actions} />}
@@ -339,13 +363,41 @@ export function LibraryView({
   create: () => void;
   globalQuery: string;
 }) {
+  const [layout, setLayout] = useState(loadLibraryPreferences);
+  const persistLayout = (next: LibraryPreferences) => {
+    try {
+      saveLibraryPreferences(next);
+      setLayout(next);
+    } catch {
+      notify("Could not save Library layout", "error");
+    }
+  };
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState("All"),
-    [sort, setSort] = useState("studied"),
+    [sort, setSort] = useState(layout.sort || "studied"),
     [view, setView] = useState("grid"),
-    [folder, setFolder] = useState("");
+    [folder, setFolder] = useState<string>(() =>
+      window.location.hash === "#Library"
+        ? window.history.state?.flintFolder || ""
+        : "",
+    );
+  const openFolder = (value: string) => {
+    window.history.pushState(
+      { ...window.history.state, flintFolder: value },
+      "",
+    );
+    setFolder(value);
+  };
+  useEffect(() => {
+    const back = () => setFolder(window.history.state?.flintFolder || "");
+    window.addEventListener("popstate", back);
+    return () => window.removeEventListener("popstate", back);
+  }, []);
   const [dragged, setDragged] = useState<string | null>(null),
     [over, setOver] = useState(""),
+    [dropPosition, setDropPosition] = useState<"before" | "after" | "inside">(
+      "inside",
+    ),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [proposal, setProposal] = useState<{
@@ -391,34 +443,38 @@ export function LibraryView({
       : ([
           ...new Set(candidates.map((d) => d.meta?.folder).filter(Boolean)),
         ] as string[]);
-  const shown = candidates
+  const shown = orderedSets(candidates, layout.order)
     .filter(
       (d) =>
         filter === "Trash" ||
         (folder ? d.meta?.folder === folder : !d.meta?.folder),
     )
-    .sort((a, b) =>
-      sort === "name"
-        ? a.title.localeCompare(b.title)
-        : sort === "cards"
-          ? b.cards.length - a.cards.length
-          : sort === "created"
-            ? (b.createdAt || "").localeCompare(a.createdAt || "")
-            : (
-                b.lastStudied ||
-                b.cards
-                  .map((c) => c.lastReviewed || "")
-                  .sort()
-                  .at(-1) ||
-                ""
-              ).localeCompare(
-                a.lastStudied ||
-                  a.cards
-                    .map((c) => c.lastReviewed || "")
-                    .sort()
-                    .at(-1) ||
-                  "",
-              ),
+    .sort(
+      (a, b) =>
+        Number(!!b.meta?.pinned) - Number(!!a.meta?.pinned) ||
+        (sort === "manual"
+          ? 0
+          : sort === "name"
+            ? a.title.localeCompare(b.title)
+            : sort === "cards"
+              ? b.cards.length - a.cards.length
+              : sort === "created"
+                ? (b.createdAt || "").localeCompare(a.createdAt || "")
+                : (
+                    b.lastStudied ||
+                    b.cards
+                      .map((c) => c.lastReviewed || "")
+                      .sort()
+                      .at(-1) ||
+                    ""
+                  ).localeCompare(
+                    a.lastStudied ||
+                      a.cards
+                        .map((c) => c.lastReviewed || "")
+                        .sort()
+                        .at(-1) ||
+                      "",
+                  )),
     );
   const batch = async (changes: Deck[]) => {
     if (actions.batch) await actions.batch(changes);
@@ -435,11 +491,61 @@ export function LibraryView({
         .map((d) => d.id),
     });
   };
+  const folderOption = (
+    name: string,
+    change: { pinned?: boolean; color?: string },
+  ) =>
+    persistLayout({
+      ...layout,
+      folders: {
+        ...layout.folders,
+        [name]: { ...layout.folders[name], ...change },
+      },
+    });
+  const insertion = (e: React.DragEvent<HTMLElement>, folderTarget = false) => {
+    const r = e.currentTarget.getBoundingClientRect(),
+      y = (e.clientY - r.top) / r.height;
+    return y < 0.25
+      ? "before"
+      : y > 0.75
+        ? "after"
+        : folderTarget
+          ? "before"
+          : "inside";
+  };
+  const reorder = (target: string, position: "before" | "after" | "inside") => {
+    if (!dragged) return;
+    const ids = dragged.startsWith("folder:")
+      ? folders
+          .map((f) => "folder:" + f)
+          .sort((a, b) => {
+            const rank = (id: string) =>
+              layout.order.includes(id)
+                ? layout.order.indexOf(id)
+                : Number.MAX_SAFE_INTEGER;
+            return rank(a) - rank(b) || a.localeCompare(b);
+          })
+      : orderedSets(
+          decks.filter(
+            (d) => !d.meta?.deletedAt && (d.meta?.folder || "") === folder,
+          ),
+          layout.order,
+        ).map((d) => d.id);
+    const next = reorderItems(ids, dragged, target, position === "after");
+    persistLayout({
+      ...layout,
+      sort: "manual",
+      order: [...layout.order.filter((id) => !ids.includes(id)), ...next],
+    });
+    setSort("manual");
+    setDragged(null);
+    setOver("");
+  };
   const dropInto = async (target: string) => {
     const id = dragged;
     setDragged(null);
     setOver("");
-    if (!id) return;
+    if (!id || id.startsWith("folder:")) return;
     try {
       await batch(
         moveFolder(
@@ -484,6 +590,20 @@ export function LibraryView({
         )
           throw Error("That folder already exists. Choose another name.");
         await batch(moveFolder(members, proposal.ids, next));
+        if (proposal.kind === "rename") {
+          const folders = {
+            ...layout.folders,
+            [next]: layout.folders[proposal.old!] || {},
+          };
+          delete folders[proposal.old!];
+          persistLayout({
+            ...layout,
+            folders,
+            order: layout.order.map((id) =>
+              id === "folder:" + proposal.old ? "folder:" + next : id,
+            ),
+          });
+        }
         if (proposal.kind === "rename" && folder === proposal.old)
           setFolder(next);
       }
@@ -572,9 +692,10 @@ export function LibraryView({
           {folder && (
             <button
               className={
-                "text-button " + (over === "root" ? "drop-target" : "")
+                "secondary folder-breadcrumb " +
+                (over === "root" ? "drop-target" : "")
               }
-              onClick={() => setFolder("")}
+              onClick={() => openFolder("")}
               onDragOver={(e) => {
                 if (dragged) {
                   e.preventDefault();
@@ -586,14 +707,14 @@ export function LibraryView({
                 void dropInto("");
               }}
             >
-              ← Library
+              <ArrowLeft size={20} /> Library / {folder}
             </button>
           )}
           <p className="eyebrow">{folder ? "FOLDER" : "YOUR COLLECTION"}</p>
           <h1>{folder || "Your Library"}</h1>
           <p>
             {folder
-              ? "A little knowledge, kept together."
+              ? `Folder · ${shown.length} ${shown.length === 1 ? "set" : "sets"}`
               : "All your sets. A place for every idea."}
           </p>
         </div>
@@ -658,8 +779,12 @@ export function LibraryView({
           <select
             aria-label="Sort sets"
             value={sort}
-            onChange={(e) => setSort(e.target.value)}
+            onChange={(e) => {
+              setSort(e.target.value);
+              persistLayout({ ...layout, sort: e.target.value });
+            }}
           >
+            <option value="manual">Manual order</option>
             <option value="studied">Recently studied</option>
             <option value="created">Recently created</option>
             <option value="name">Name</option>
@@ -690,29 +815,78 @@ export function LibraryView({
       </p>
       <div className={"rich-deck-grid " + (view === "list" ? "list-view" : "")}>
         {folders
-          .sort((a, b) => a.localeCompare(b))
+          .sort(
+            (a, b) =>
+              Number(!!layout.folders[b]?.pinned) -
+                Number(!!layout.folders[a]?.pinned) ||
+              (sort === "manual"
+                ? (layout.order.indexOf("folder:" + a) < 0
+                    ? 1e9
+                    : layout.order.indexOf("folder:" + a)) -
+                  (layout.order.indexOf("folder:" + b) < 0
+                    ? 1e9
+                    : layout.order.indexOf("folder:" + b))
+                : 0) ||
+              a.localeCompare(b),
+          )
           .map((f) => (
             <article
               key={"folder:" + f}
-              className={"folder-card " + (over === f ? "drop-target" : "")}
+              className={
+                "folder-card " +
+                (over === f ? "drop-target drop-" + dropPosition : "")
+              }
+              style={
+                {
+                  order: layout.folders[f]?.pinned ? -1 : 0,
+                  "--folder-color": layout.folders[f]?.color || "#e99b50",
+                } as React.CSSProperties
+              }
+              onContextMenu={openItemMenu}
+              draggable
+              onDragStart={(e) => {
+                if ((e.target as Element).closest(".deck-menu")) {
+                  e.preventDefault();
+                  return;
+                }
+                setDragged("folder:" + f);
+                e.dataTransfer.setData("text/plain", "folder:" + f);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragEnd={() => {
+                setDragged(null);
+                setOver("");
+              }}
               onDragOver={(e) => {
                 if (dragged) {
                   e.preventDefault();
                   setOver(f);
+                  setDropPosition(
+                    dragged.startsWith("folder:")
+                      ? insertion(e, true)
+                      : "inside",
+                  );
                 }
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                void dropInto(f);
+                if (dragged?.startsWith("folder:"))
+                  reorder("folder:" + f, dropPosition);
+                else void dropInto(f);
               }}
             >
               <button
                 className="folder-open"
                 aria-label={"Open folder " + f}
-                onClick={() => setFolder(f)}
+                onClick={() => openFolder(f)}
               >
                 <FolderOpen size={44} />
-                <h3>{f}</h3>
+                <h3>
+                  {layout.folders[f]?.pinned && (
+                    <Pin size={13} aria-label="Pinned folder" />
+                  )}{" "}
+                  {f}
+                </h3>
                 <p>
                   {
                     decks.filter(
@@ -727,6 +901,30 @@ export function LibraryView({
                   <MoreHorizontal size={19} />
                 </summary>
                 <div className="menu-popover">
+                  <button
+                    onClick={() =>
+                      folderOption(f, { pinned: !layout.folders[f]?.pinned })
+                    }
+                  >
+                    <Pin />
+                    {layout.folders[f]?.pinned ? "Unpin" : "Pin"}
+                  </button>
+                  <label className="folder-color">
+                    Folder color
+                    <select
+                      aria-label={"Color for folder " + f}
+                      value={layout.folders[f]?.color || "#e99b50"}
+                      onChange={(e) =>
+                        folderOption(f, { color: e.target.value })
+                      }
+                    >
+                      <option value="#e99b50">Amber</option>
+                      <option value="#6aa9dd">Blue</option>
+                      <option value="#75b88a">Green</option>
+                      <option value="#b68cdd">Purple</option>
+                      <option value="#df8395">Rose</option>
+                    </select>
+                  </label>
                   <button
                     aria-label={"Rename folder " + f}
                     onClick={() => editFolder("rename", f)}
@@ -794,10 +992,12 @@ export function LibraryView({
             <div
               key={d.id}
               className={
-                "deck-drop-wrap " + (over === d.id ? "drop-target" : "")
+                "deck-drop-wrap " +
+                (over === d.id ? "drop-target drop-" + dropPosition : "")
               }
+              style={{ order: d.meta?.pinned ? -1 : 0 }}
               draggable
-              title="Drag onto a set to create a folder, or use Move to folder in the menu."
+              title="Drop near the top/bottom to reorder; drop in the center to create a folder (confirmation required)."
               onDragStart={(e) => {
                 if ((e.target as Element).closest(".deck-menu,input,select")) {
                   e.preventDefault();
@@ -812,14 +1012,23 @@ export function LibraryView({
                 setOver("");
               }}
               onDragOver={(e) => {
-                if (dragged && dragged !== d.id) {
+                if (
+                  dragged &&
+                  !dragged.startsWith("folder:") &&
+                  dragged !== d.id
+                ) {
                   e.preventDefault();
                   setOver(d.id);
+                  setDropPosition(insertion(e));
                 }
               }}
               onDrop={(e) => {
                 e.preventDefault();
                 if (dragged && dragged !== d.id) {
+                  if (dropPosition !== "inside") {
+                    reorder(d.id, dropPosition);
+                    return;
+                  }
                   setError("");
                   setName("New folder");
                   setProposal({ kind: "create", ids: [dragged, d.id] });
@@ -831,7 +1040,9 @@ export function LibraryView({
               <RichDeckCard deck={d} start={start} actions={actions} />
               {over === d.id && (
                 <small className="folder-drop-hint">
-                  Create a folder together
+                  {dropPosition === "inside"
+                    ? "Create a folder together"
+                    : "Insert " + dropPosition}
                 </small>
               )}
             </div>
@@ -855,4 +1066,19 @@ export function LibraryView({
       )}
     </div>
   );
+}
+function openItemMenu(event: React.MouseEvent<HTMLElement>) {
+  const menu =
+    event.currentTarget.querySelector<HTMLDetailsElement>("details.deck-menu");
+  if (!menu) return;
+  event.preventDefault();
+  document
+    .querySelectorAll<HTMLDetailsElement>("details.deck-menu[open]")
+    .forEach((other) => {
+      if (other !== menu) other.open = false;
+    });
+  menu.open = true;
+  menu
+    .querySelector<HTMLButtonElement>("button")
+    ?.focus({ preventScroll: true });
 }

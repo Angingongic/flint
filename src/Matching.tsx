@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { StudyImage } from "./Study";
 export type MatchItem = {
@@ -72,7 +72,7 @@ export function Matching({
   const focusAfterMove = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (focusAfterMove.current) {
-      handles.current[focusAfterMove.current]?.focus();
+      handles.current[focusAfterMove.current]?.focus({ preventScroll: true });
       focusAfterMove.current = null;
     }
   }, [order]);
@@ -80,10 +80,65 @@ export function Matching({
     if (disabled) return;
     const next = moveAnswer(order, order.indexOf(id), to);
     if (next === order) return;
-    focusAfterMove.current = id;
+    if (!pointer.current) focusAfterMove.current = id;
     onChange(next);
     setAnnouncement(`Moved answer to row ${to + 1} of ${left.length}`);
   };
+  const dragY = useRef(0);
+  const dragMove = useRef(move);
+  dragMove.current = move;
+  useEffect(() => {
+    if (!dragged) return;
+    let frame = 0,
+      previousTime = 0;
+    let container = board.current?.parentElement;
+    while (
+      container &&
+      !(
+        container.scrollHeight > container.clientHeight &&
+        /auto|scroll/.test(getComputedStyle(container).overflowY)
+      )
+    )
+      container = container.parentElement;
+    const scroller = container;
+    const tick = (time: number) => {
+      if (!pointer.current) return;
+      const bounds = scroller?.getBoundingClientRect();
+      const top = Math.max(0, bounds?.top || 0),
+        bottom = Math.min(
+          window.innerHeight,
+          bounds?.bottom || window.innerHeight,
+        );
+      const y = dragY.current,
+        edge = 64;
+      const speed =
+        y < top + edge
+          ? -Math.min(1, (top + edge - y) / edge)
+          : y > bottom - edge
+            ? Math.min(1, (y - bottom + edge) / edge)
+            : 0;
+      const delta =
+        speed * Math.min(32, previousTime ? time - previousTime : 16) * 0.45;
+      previousTime = time;
+      if (delta) {
+        if (scroller) scroller.scrollTop += delta;
+        else window.scrollBy(0, delta);
+        const rows = Array.from(
+          board.current?.querySelectorAll<HTMLElement>(
+            ".match-row:not(.match-heading)",
+          ) || [],
+        );
+        const index = rows.findIndex((row) => {
+          const r = row.getBoundingClientRect();
+          return y >= r.top && y <= r.bottom;
+        });
+        if (index >= 0) dragMove.current(pointer.current.id, index);
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [dragged]);
   return (
     <section
       ref={board}
@@ -91,7 +146,8 @@ export function Matching({
       aria-label="Match terms and definitions"
     >
       <p className="match-help">
-        Drag answers to align · ↑ / ↓ to move a focused answer
+        Drag answers (use the grip on touchscreens) · ↑ / ↓ to move a focused
+        answer
       </p>
       <div className="match-row match-heading">
         <h3>{termFirst ? "Terms" : "Definitions"}</h3>
@@ -142,15 +198,18 @@ export function Matching({
                 (dragged === answer?.id ? "dragging" : "")
               }
               data-answer-id={answer?.id}
-              style={{ touchAction: "none" }}
+              style={{ touchAction: "pan-y" }}
               onPointerDown={(e) => {
                 if (
                   disabled ||
+                  (e.pointerType === "touch" &&
+                    !(e.target as Element).closest(".drag-handle")) ||
                   !answer ||
                   e.button > 0 ||
                   (e.target as Element).closest(".audio-player")
                 )
                   return;
+                dragY.current = e.clientY;
                 pointer.current = { id: answer.id, pointerId: e.pointerId };
                 e.currentTarget.setPointerCapture?.(e.pointerId);
                 setDragged(answer.id);
@@ -161,6 +220,7 @@ export function Matching({
                   pointer.current.pointerId !== e.pointerId
                 )
                   return;
+                dragY.current = e.clientY;
                 const rows = Array.from(
                   board.current?.querySelectorAll<HTMLElement>(
                     ".match-row:not(.match-heading)",
@@ -208,6 +268,7 @@ export function Matching({
                   <button
                     type="button"
                     className="drag-handle"
+                    style={{ touchAction: "none" }}
                     disabled={disabled}
                     ref={(el) => {
                       handles.current[answer.id] = el;

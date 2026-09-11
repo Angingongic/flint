@@ -100,18 +100,24 @@ describe("study interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Library" }));
     const search = screen.getByRole("textbox", { name: "Search your sets" });
     fireEvent.change(search, { target: { value: "chromatic" } });
-    expect(screen.getByRole("button", { name: "Open folder Art class" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Open folder Art class" }),
+    ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open Colors" })).toBeNull();
     fireEvent.change(search, { target: { value: "no match" } });
     expect(screen.queryByRole("button", { name: "Open Colors" })).toBeNull();
     fireEvent.change(search, { target: { value: "Art class" } });
-    fireEvent.click(screen.getByRole("button",{name:"Open folder Art class"}));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open folder Art class" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose preset" }));
     fireEvent.click(screen.getByRole("button", { name: "Spectrum Gradient" }));
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    fireEvent.click(await screen.findByRole("button",{name:"Open folder Art class"}));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open folder Art class" }),
+    );
     await screen.findByRole("button", { name: "Open Colors" });
     expect(JSON.parse(localStorage.getItem("flint-decks")!)[0].coverImage).toBe(
       "flint:preset/spectrum",
@@ -124,7 +130,9 @@ describe("study interactions", () => {
     await screen.findByRole("button", { name: "Undo" });
     expect(screen.queryByRole("button", { name: "Open Colors" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    fireEvent.click(await screen.findByRole("button",{name:"Open folder Art class"}));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open folder Art class" }),
+    );
     await screen.findByRole("button", { name: "Open Colors" });
     fireEvent.click(screen.getByRole("button", { name: "Open Colors" }));
     fireEvent.click(screen.getByLabelText("More actions for Colors"));
@@ -145,7 +153,9 @@ describe("study interactions", () => {
     view.unmount();
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Library" }));
-    fireEvent.click(screen.getByRole("button",{name:"Open folder Art class"}));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open folder Art class" }),
+    );
     expect(screen.getByRole("button", { name: "Open Colors" })).toBeTruthy();
     expect(
       JSON.parse(localStorage.getItem("flint-decks")!)[0].cards,
@@ -258,12 +268,12 @@ describe("study interactions", () => {
     for (let i = 0; i < 4; i++)
       fireEvent.click(screen.getByRole("button", { name: /Add card/ }));
     screen
-      .getAllByPlaceholderText("Enter a term or question")
+      .getAllByPlaceholderText("Add front text")
       .forEach((input, i) =>
         fireEvent.change(input, { target: { value: "Term " + i } }),
       );
     screen
-      .getAllByPlaceholderText("Enter a definition or answer")
+      .getAllByPlaceholderText("Add back text")
       .forEach((input, i) =>
         fireEvent.change(input, { target: { value: "Definition " + i } }),
       );
@@ -313,9 +323,7 @@ describe("study interactions", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Library" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(
-      screen.getAllByPlaceholderText("Enter a term or question"),
-    ).toHaveLength(5);
+    expect(screen.getAllByPlaceholderText("Add front text")).toHaveLength(5);
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Replace" })).toHaveLength(
         3,
@@ -570,10 +578,8 @@ describe("study interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     for (let i = 0; i < 9; i++)
       fireEvent.click(screen.getByRole("button", { name: /Add card/ }));
-    const questions = screen.getAllByPlaceholderText(
-        "Enter a term or question",
-      ),
-      answers = screen.getAllByPlaceholderText("Enter a definition or answer");
+    const questions = screen.getAllByPlaceholderText("Add front text"),
+      answers = screen.getAllByPlaceholderText("Add back text");
     expect(questions).toHaveLength(10);
     for (let i = 0; i < 10; i++) {
       fireEvent.change(questions[i], { target: { value: "Question " + i } });

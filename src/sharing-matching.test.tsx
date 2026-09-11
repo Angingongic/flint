@@ -107,7 +107,11 @@ describe("matching", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Written" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Matching" }));
     fireEvent.click(screen.getByRole("button", { name: "Generate test" }));
-    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Match terms and definitions" }),
+      ).queryByRole("combobox"),
+    ).toBeNull();
     const prompts = Array.from(
       document.querySelectorAll(".match-prompt span"),
     ).map((el) => el.textContent);

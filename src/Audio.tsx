@@ -170,6 +170,8 @@ export function AudioField({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [filename, setFilename] = useState("");
+  const filenames = useRef<Record<string, string>>({});
+  useEffect(() => setFilename(filenames.current[value || ""] || ""), [value]);
   const attach = async (file?: File) => {
     if (!file || lock.current) return;
     lock.current = true;
@@ -177,6 +179,7 @@ export function AudioField({
     setError("");
     try {
       const name = await saveAudioBytes(file);
+      filenames.current[name] = file.name;
       onChange(name);
       setFilename(file.name);
     } catch (e) {
