@@ -1,3 +1,4 @@
+import { mouseDrag } from "./test-drag";
 // @vitest-environment jsdom
 import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -157,15 +158,9 @@ describe("0.1.4a completion", () => {
       screen.getByRole("button", { name: "Open Audio study" }),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Open Root" })).toBeNull();
-    const transfer = { setData: vi.fn(), effectAllowed: "" };
-    fireEvent.dragStart(document.querySelector(".deck-drop-wrap")!, {
-      dataTransfer: transfer,
-    });
-    fireEvent.drop(
+    mouseDrag(
+      document.querySelector(".deck-drop-wrap")!,
       screen.getByRole("button", { name: "Library / Languages" }),
-      {
-        dataTransfer: transfer,
-      },
     );
     await waitFor(() =>
       expect(

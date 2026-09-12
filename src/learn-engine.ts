@@ -64,8 +64,9 @@ export function grade(
   input: string,
   expected: string,
   grading: LearnOptions["grading"] = "normal",
+  accents?: boolean,
 ): "CORRECT" | "CLOSE" | "INCORRECT" {
-  return gradeAnswer(input, expected, grading);
+  return gradeAnswer(input, expected, grading, accents);
 }
 export function answerLearn(
   state: WaveState,

@@ -29,6 +29,7 @@ jobs:
           else
             title="Flint ${GITHUB_REF_NAME#v}"
             if [ "$GITHUB_REF_NAME" = "v0.1.5" ]; then title="Flint 0.1.4a"; fi
+            if [ "$GITHUB_REF_NAME" = "v0.1.7" ]; then title="Flint 0.1.7 — Interaction & UI Cleanup"; fi
             gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "$title" --notes-file RELEASE_NOTES.md
           fi
   build:
@@ -81,7 +82,7 @@ jobs:
           tauriScript: node scripts/ci-build.mjs --release
           args: ${{ matrix.args }}
           tagName: ${{ github.ref_name }}
-          releaseName: ${{ github.ref_name == 'v0.1.5' && 'Flint 0.1.4a' || format('Flint {0}', github.ref_name) }}
+          releaseName: ${{ github.ref_name == 'v0.1.7' && 'Flint 0.1.7 — Interaction & UI Cleanup' || github.ref_name == 'v0.1.5' && 'Flint 0.1.4a' || format('Flint {0}', github.ref_name) }}
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false

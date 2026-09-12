@@ -52,3 +52,7 @@ test('complete Apple credentials enable signing and notarization', () => {
   assert.equal(result.call.env.APPLE_TEAM_ID, 'team');
   assert.match(result.status, /notarization requested/);
 });
+test('desktop HTML image drop events are not swallowed by the native webview', () => {
+  const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
+  assert.equal(config.app.windows[0].dragDropEnabled, false);
+});

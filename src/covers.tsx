@@ -1,3 +1,5 @@
+import { ItemMenu } from "./ItemMenu";
+import { ImagePlus } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Deck } from "./lib";
 import { mediaUrl } from "./native";
@@ -133,16 +135,34 @@ export function SetCover({
 export function CoverPicker({
   deck,
   onChange,
+  onUpload,
+  onPaste,
 }: {
   deck: Pick<Deck, "id" | "title" | "coverImage">;
   onChange: (id: string) => void;
+  onUpload?: () => void;
+  onPaste?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="cover-picker">
-      <SetCover deck={deck} />
+      <div className="interactive-cover">
+        <SetCover deck={deck} />
+        <ItemMenu className="cover-actions deck-menu">
+          <summary aria-label="Change cover image" title="Change cover image">
+            <ImagePlus size={22} />
+          </summary>
+          <div className="menu-popover">
+            <button onClick={() => setOpen(true)}>Choose preset</button>
+            <button onClick={onUpload}>Upload image</button>
+            <button onClick={onPaste}>Paste image</button>
+          </div>
+        </ItemMenu>
+      </div>
       <div>
-        <p className="eyebrow">FLINT ORIGINALS</p>
+        {(!deck.coverImage || deck.coverImage.startsWith("flint:preset/")) && (
+          <p className="eyebrow">FLINT ORIGINALS</p>
+        )}
         <h3>
           {deck.coverImage && !deck.coverImage.startsWith("flint:")
             ? "Your image"
@@ -150,9 +170,6 @@ export function CoverPicker({
         </h3>
         <p>Give this set a world of its own.</p>
         <div className="button-row">
-          <button className="secondary" onClick={() => setOpen(true)}>
-            <Grid2X2 size={16} /> Choose preset
-          </button>
           <button
             className="secondary"
             onClick={() => {

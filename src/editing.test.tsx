@@ -1,3 +1,4 @@
+import { mouseDrag } from "./test-drag";
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -170,7 +171,7 @@ describe("0.1.4 editing safety", () => {
     const batch = vi.fn();
     function Library() {
       const [decks, setDecks] = useState<Deck[]>([
-        {...deck,meta:{}},
+        { ...deck, meta: {} },
         { ...deck, id: "b", title: "Two", meta: {} },
       ]);
       return (
@@ -197,14 +198,15 @@ describe("0.1.4 editing safety", () => {
     render(<Library />);
     const wrappers = document.querySelectorAll(".deck-drop-wrap"),
       dataTransfer = { setData: vi.fn(), effectAllowed: "" };
-    fireEvent.dragStart(wrappers[0], { dataTransfer });
-    fireEvent.drop(wrappers[1], { dataTransfer });
+    mouseDrag(wrappers[0], wrappers[1]);
     expect(batch).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole("textbox", { name: "Folder name" }), {
       target: { value: "Together" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create folder" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Open folder Together" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open folder Together" }),
+    );
     expect(batch.mock.calls[0][0]).toHaveLength(2);
     fireEvent.click(
       screen.getByRole("button", { name: "Rename folder Together" }),

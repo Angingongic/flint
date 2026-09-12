@@ -1,3 +1,5 @@
+import { ItemMenu } from "./ItemMenu";
+import { usePointerDrag } from "./pointer-drag";
 import {
   loadLibraryPreferences,
   saveLibraryPreferences,
@@ -32,6 +34,11 @@ import { Modal } from "./ui";
 import { Progress, notify } from "./motion";
 import { moveFolder } from "./editing";
 export type SetActions = {
+  saveCard?: (
+    deckId: string,
+    card: Deck["cards"][number],
+    starred: boolean,
+  ) => Promise<void>;
   remove?: (id: string) => Promise<void>;
   batch?: (decks: Deck[]) => Promise<void>;
   update: (deck: Deck) => Promise<void>;
@@ -68,14 +75,7 @@ export function DeckMenu({
     [busy, setBusy] = useState(false);
   const details = useRef<HTMLDetailsElement>(null);
   const lock = useRef(false);
-  useEffect(() => {
-    const close = (event: PointerEvent) => {
-      if (details.current && !details.current.contains(event.target as Node))
-        details.current.open = false;
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, []);
+
   const run = async (job: () => Promise<void>) => {
     if (lock.current) return;
     lock.current = true;
@@ -92,7 +92,7 @@ export function DeckMenu({
   };
   return (
     <>
-      <details
+      <ItemMenu
         ref={details}
         className="deck-menu"
         onKeyDown={(e) => {
@@ -191,7 +191,7 @@ export function DeckMenu({
             Delete set
           </button>
         </div>
-      </details>
+      </ItemMenu>
       {modal === "delete" && (
         <Modal
           title={"Delete “" + deck.title + "”?"}
@@ -406,6 +406,47 @@ export function LibraryView({
       old?: string;
     } | null>(null),
     [name, setName] = useState("");
+  const toolbar = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    let last = window.scrollY,
+      travel = 0,
+      direction = 0,
+      quietUntil = 0;
+    const scroll = () => {
+      const y = window.scrollY,
+        delta = y - last;
+      last = y;
+      if (Date.now() < quietUntil || Math.abs(delta) < 2) return;
+      if (
+        dragged ||
+        (toolbar.current?.contains(document.activeElement) &&
+          document.activeElement?.matches(
+            "input,select,textarea,[contenteditable=true]",
+          )) ||
+        document.querySelector(".anchored-item-menu")
+      )
+        return;
+      const nextDirection = Math.sign(delta);
+      travel =
+        nextDirection === direction
+          ? travel + Math.abs(delta)
+          : Math.abs(delta);
+      direction = nextDirection;
+      if (y < 80 || (direction < 0 && travel > 24)) {
+        setCollapsed(false);
+        quietUntil = Date.now() + 300;
+        travel = 0;
+      } else if (direction > 0 && travel > 70 && y > 180) {
+        setCollapsed(true);
+        quietUntil = Date.now() + 300;
+        travel = 0;
+      }
+    };
+    window.addEventListener("scroll", scroll, { passive: true });
+    return () => window.removeEventListener("scroll", scroll);
+  }, [dragged]);
+  useEffect(() => setCollapsed(false), [folder, filter]);
   const matches = (d: Deck) =>
     [query, globalQuery].every(
       (q) =>
@@ -502,36 +543,24 @@ export function LibraryView({
         [name]: { ...layout.folders[name], ...change },
       },
     });
-  const insertion = (e: React.DragEvent<HTMLElement>, folderTarget = false) => {
-    const r = e.currentTarget.getBoundingClientRect(),
-      y = (e.clientY - r.top) / r.height;
-    return y < 0.25
-      ? "before"
-      : y > 0.75
-        ? "after"
-        : folderTarget
-          ? "before"
-          : "inside";
-  };
-  const reorder = (target: string, position: "before" | "after" | "inside") => {
-    if (!dragged) return;
-    const ids = dragged.startsWith("folder:")
-      ? folders
-          .map((f) => "folder:" + f)
-          .sort((a, b) => {
-            const rank = (id: string) =>
-              layout.order.includes(id)
-                ? layout.order.indexOf(id)
-                : Number.MAX_SAFE_INTEGER;
-            return rank(a) - rank(b) || a.localeCompare(b);
-          })
-      : orderedSets(
-          decks.filter(
-            (d) => !d.meta?.deletedAt && (d.meta?.folder || "") === folder,
-          ),
-          layout.order,
-        ).map((d) => d.id);
-    const next = reorderItems(ids, dragged, target, position === "after");
+  const rootIds = [
+    ...folders.map((f) => "folder:" + f),
+    ...shown.map((d) => d.id),
+  ];
+  const rank = (id: string) =>
+    layout.order.includes(id)
+      ? layout.order.indexOf(id)
+      : layout.order.length + rootIds.indexOf(id);
+  const itemOrder = (id: string, pinned?: boolean) =>
+    (pinned ? -100000 : 0) + (sort === "manual" ? rank(id) : 0);
+  const reorder = (
+    target: string,
+    position: "before" | "after" | "inside",
+    source = dragged,
+  ) => {
+    if (!source) return;
+    const ids = [...rootIds].sort((a, b) => rank(a) - rank(b));
+    const next = reorderItems(ids, source, target, position === "after");
     persistLayout({
       ...layout,
       sort: "manual",
@@ -541,8 +570,8 @@ export function LibraryView({
     setDragged(null);
     setOver("");
   };
-  const dropInto = async (target: string) => {
-    const id = dragged;
+  const dropInto = async (target: string, source = dragged) => {
+    const id = source;
     setDragged(null);
     setOver("");
     if (!id || id.startsWith("folder:")) return;
@@ -559,6 +588,60 @@ export function LibraryView({
       notify("Could not move set", "error");
     }
   };
+  const hit = (point: { id: string; x: number; y: number }) => {
+    const el = document
+      .elementFromPoint(point.x, point.y)
+      ?.closest<HTMLElement>("[data-library-id]");
+    if (!el || el.dataset.libraryId === point.id) return null;
+    const r = el.getBoundingClientRect(),
+      x = (point.x - r.left) / r.width,
+      y = (point.y - r.top) / r.height;
+    const position =
+      x < 0.18 || y < 0.22
+        ? "before"
+        : x > 0.82 || y > 0.78
+          ? "after"
+          : "inside";
+    return {
+      id: el.dataset.libraryId!,
+      position: position as "before" | "after" | "inside",
+    };
+  };
+  const pointerDrag = usePointerDrag(
+    (point) => {
+      const target = hit(point);
+      setDragged(point.id);
+      setOver(target ? target.id.replace(/^folder:/, "") : "");
+      setDropPosition(target?.position || "inside");
+    },
+    (point) => {
+      const target = hit(point);
+      if (!target) return;
+      if (target.id === "root") {
+        void dropInto("", point.id);
+        return;
+      }
+      if (target.position !== "inside" || point.id.startsWith("folder:")) {
+        reorder(
+          target.id,
+          target.position === "inside" ? "before" : target.position,
+          point.id,
+        );
+        return;
+      }
+      if (target.id.startsWith("folder:")) {
+        void dropInto(target.id.slice(7), point.id);
+        return;
+      }
+      setError("");
+      setName("New folder");
+      setProposal({ kind: "create", ids: [point.id, target.id] });
+    },
+    () => {
+      setDragged(null);
+      setOver("");
+    },
+  );
   const confirm = async () => {
     if (!proposal || busy) return;
     setBusy(true);
@@ -689,27 +772,6 @@ export function LibraryView({
       )}
       <div className="page-title">
         <div>
-          {folder && (
-            <button
-              className={
-                "secondary folder-breadcrumb " +
-                (over === "root" ? "drop-target" : "")
-              }
-              onClick={() => openFolder("")}
-              onDragOver={(e) => {
-                if (dragged) {
-                  e.preventDefault();
-                  setOver("root");
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                void dropInto("");
-              }}
-            >
-              <ArrowLeft size={20} /> Library / {folder}
-            </button>
-          )}
           <p className="eyebrow">{folder ? "FOLDER" : "YOUR COLLECTION"}</p>
           <h1>{folder || "Your Library"}</h1>
           <p>
@@ -718,9 +780,42 @@ export function LibraryView({
               : "All your sets. A place for every idea."}
           </p>
         </div>
-        <div className="button-row">
+        <button className="primary" onClick={create}>
+          <Plus size={17} />
+          New set
+        </button>
+      </div>
+      <div
+        ref={toolbar}
+        className={"library-toolbar " + (collapsed ? "collapsed" : "")}
+      >
+        <div>
+          <label className="library-search">
+            <Search size={20} />
+            <input
+              aria-label="Search your sets"
+              placeholder={
+                folder ? "Search this folder…" : "Search sets and folders…"
+              }
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {query && (
+              <button className="text-button" onClick={() => setQuery("")}>
+                Clear
+              </button>
+            )}
+          </label>
           {folder && (
-            <>
+            <div className="folder-toolbar">
+              <button
+                className="secondary folder-breadcrumb"
+                data-library-id="root"
+                onClick={() => openFolder("")}
+              >
+                <ArrowLeft size={18} />
+                Library / {folder}
+              </button>
               <button
                 className="secondary"
                 aria-label={"Rename folder " + folder}
@@ -735,77 +830,57 @@ export function LibraryView({
               >
                 <Trash2 size={18} />
               </button>
-            </>
+            </div>
           )}
-          <button className="primary" onClick={create}>
-            <Plus size={17} />
-            New set
-          </button>
-        </div>
-      </div>
-      <label className="library-search">
-        <Search size={20} />
-        <input
-          aria-label="Search your sets"
-          placeholder={
-            folder ? "Search this folder…" : "Search sets and folders…"
-          }
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        {query && (
-          <button className="text-button" onClick={() => setQuery("")}>
-            Clear
-          </button>
-        )}
-      </label>
-      <div className="library-controls">
-        <div className="filter-tabs">
-          {["All", "Recent", "Favorites", "Archived", "Trash"].map((f) => (
-            <button
-              key={f}
-              aria-pressed={filter === f}
-              className={filter === f ? "selected" : ""}
-              onClick={() => {
-                setFilter(f);
-                setFolder("");
-              }}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-        <div className="button-row">
-          <select
-            aria-label="Sort sets"
-            value={sort}
-            onChange={(e) => {
-              setSort(e.target.value);
-              persistLayout({ ...layout, sort: e.target.value });
-            }}
-          >
-            <option value="manual">Manual order</option>
-            <option value="studied">Recently studied</option>
-            <option value="created">Recently created</option>
-            <option value="name">Name</option>
-            <option value="cards">Most cards</option>
-          </select>
-          <button
-            className="icon"
-            aria-label="Grid view"
-            aria-pressed={view === "grid"}
-            onClick={() => setView("grid")}
-          >
-            <Grid2X2 size={17} />
-          </button>
-          <button
-            className="icon"
-            aria-label="List view"
-            aria-pressed={view === "list"}
-            onClick={() => setView("list")}
-          >
-            <List size={17} />
-          </button>
+          <div className="library-controls">
+            <div className="filter-tabs">
+              {["All", "Recent", "Favorites", "Archived", "Trash"].map((f) => (
+                <button
+                  key={f}
+                  aria-pressed={filter === f}
+                  className={filter === f ? "selected" : ""}
+                  onClick={() => {
+                    setFilter(f);
+                    setFolder("");
+                  }}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+            <div className="button-row">
+              <select
+                aria-label="Sort sets"
+                value={sort}
+                onChange={(e) => {
+                  setSort(e.target.value);
+                  persistLayout({ ...layout, sort: e.target.value });
+                }}
+              >
+                <option value="manual">Manual order</option>
+                <option value="studied">Recently studied</option>
+                <option value="created">Recently created</option>
+                <option value="name">Name</option>
+                <option value="cards">Most cards</option>
+              </select>
+              <button
+                className="icon"
+                aria-label="Grid view"
+                aria-pressed={view === "grid"}
+                onClick={() => setView("grid")}
+              >
+                <Grid2X2 size={17} />
+              </button>
+              <button
+                className="icon"
+                aria-label="List view"
+                aria-pressed={view === "list"}
+                onClick={() => setView("list")}
+              >
+                <List size={17} />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
       <p className="result-count" role="status">
@@ -838,42 +913,16 @@ export function LibraryView({
               }
               style={
                 {
-                  order: layout.folders[f]?.pinned ? -1 : 0,
+                  order: itemOrder("folder:" + f, layout.folders[f]?.pinned),
                   "--folder-color": layout.folders[f]?.color || "#e99b50",
                 } as React.CSSProperties
               }
               onContextMenu={openItemMenu}
-              draggable
-              onDragStart={(e) => {
-                if ((e.target as Element).closest(".deck-menu")) {
-                  e.preventDefault();
-                  return;
-                }
-                setDragged("folder:" + f);
-                e.dataTransfer.setData("text/plain", "folder:" + f);
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              onDragEnd={() => {
-                setDragged(null);
-                setOver("");
-              }}
-              onDragOver={(e) => {
-                if (dragged) {
-                  e.preventDefault();
-                  setOver(f);
-                  setDropPosition(
-                    dragged.startsWith("folder:")
-                      ? insertion(e, true)
-                      : "inside",
-                  );
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (dragged?.startsWith("folder:"))
-                  reorder("folder:" + f, dropPosition);
-                else void dropInto(f);
-              }}
+              data-library-id={"folder:" + f}
+              onPointerDown={(e) => pointerDrag.begin(e, "folder:" + f)}
+              onClickCapture={pointerDrag.click}
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
             >
               <button
                 className="folder-open"
@@ -896,7 +945,7 @@ export function LibraryView({
                   sets
                 </p>
               </button>
-              <details className="deck-menu">
+              <ItemMenu className="deck-menu">
                 <summary aria-label={"Actions for folder " + f}>
                   <MoreHorizontal size={19} />
                 </summary>
@@ -940,7 +989,7 @@ export function LibraryView({
                     Delete folder
                   </button>
                 </div>
-              </details>
+              </ItemMenu>
             </article>
           ))}
         {shown.map((d) =>
@@ -995,47 +1044,13 @@ export function LibraryView({
                 "deck-drop-wrap " +
                 (over === d.id ? "drop-target drop-" + dropPosition : "")
               }
-              style={{ order: d.meta?.pinned ? -1 : 0 }}
-              draggable
-              title="Drop near the top/bottom to reorder; drop in the center to create a folder (confirmation required)."
-              onDragStart={(e) => {
-                if ((e.target as Element).closest(".deck-menu,input,select")) {
-                  e.preventDefault();
-                  return;
-                }
-                setDragged(d.id);
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", d.id);
-              }}
-              onDragEnd={() => {
-                setDragged(null);
-                setOver("");
-              }}
-              onDragOver={(e) => {
-                if (
-                  dragged &&
-                  !dragged.startsWith("folder:") &&
-                  dragged !== d.id
-                ) {
-                  e.preventDefault();
-                  setOver(d.id);
-                  setDropPosition(insertion(e));
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (dragged && dragged !== d.id) {
-                  if (dropPosition !== "inside") {
-                    reorder(d.id, dropPosition);
-                    return;
-                  }
-                  setError("");
-                  setName("New folder");
-                  setProposal({ kind: "create", ids: [dragged, d.id] });
-                }
-                setDragged(null);
-                setOver("");
-              }}
+              style={{ order: itemOrder(d.id, d.meta?.pinned) }}
+              data-library-id={d.id}
+              onPointerDown={(e) => pointerDrag.begin(e, d.id)}
+              onClickCapture={pointerDrag.click}
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
+              title="Drag edges to reorder; drop in the center to group."
             >
               <RichDeckCard deck={d} start={start} actions={actions} />
               {over === d.id && (
@@ -1077,8 +1092,9 @@ function openItemMenu(event: React.MouseEvent<HTMLElement>) {
     .forEach((other) => {
       if (other !== menu) other.open = false;
     });
-  menu.open = true;
-  menu
-    .querySelector<HTMLButtonElement>("button")
-    ?.focus({ preventScroll: true });
+  menu.dispatchEvent(
+    new CustomEvent("flint-menu", {
+      detail: { x: event.clientX, y: event.clientY },
+    }),
+  );
 }

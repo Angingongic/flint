@@ -1,3 +1,4 @@
+import { usePointerDrag } from "./pointer-drag";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { StudyImage } from "./Study";
@@ -139,6 +140,32 @@ export function Matching({
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [dragged]);
+  const drag = usePointerDrag(
+    (point) => {
+      pointer.current = { id: point.id, pointerId: 0 };
+      dragY.current = point.y;
+      setDragged(point.id);
+      const rows = Array.from(
+        board.current?.querySelectorAll<HTMLElement>(
+          ".match-row:not(.match-heading)",
+        ) || [],
+      );
+      const index = rows.findIndex((row) => {
+        const r = row.getBoundingClientRect();
+        return point.y >= r.top && point.y <= r.bottom;
+      });
+      if (index >= 0) {
+        setTarget(index);
+        move(point.id, index);
+      }
+    },
+    () => {},
+    () => {
+      pointer.current = null;
+      setDragged(null);
+      setTarget(null);
+    },
+  );
   return (
     <section
       ref={board}
@@ -167,19 +194,6 @@ export function Matching({
                 : "")
             }
             key={item.id}
-            onDragOver={(e) => {
-              if (dragged && !disabled) {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                setTarget(index);
-              }
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (dragged) move(dragged, index);
-              setDragged(null);
-              setTarget(null);
-            }}
           >
             <div className="match-prompt">
               <small className="match-number" aria-label={`Row ${index + 1}`}>
@@ -200,68 +214,11 @@ export function Matching({
               data-answer-id={answer?.id}
               style={{ touchAction: "pan-y" }}
               onPointerDown={(e) => {
-                if (
-                  disabled ||
-                  (e.pointerType === "touch" &&
-                    !(e.target as Element).closest(".drag-handle")) ||
-                  !answer ||
-                  e.button > 0 ||
-                  (e.target as Element).closest(".audio-player")
-                )
-                  return;
-                dragY.current = e.clientY;
-                pointer.current = { id: answer.id, pointerId: e.pointerId };
-                e.currentTarget.setPointerCapture?.(e.pointerId);
-                setDragged(answer.id);
+                if (!disabled && answer) drag.begin(e, answer.id, true);
               }}
-              onPointerMove={(e) => {
-                if (
-                  !pointer.current ||
-                  pointer.current.pointerId !== e.pointerId
-                )
-                  return;
-                dragY.current = e.clientY;
-                const rows = Array.from(
-                  board.current?.querySelectorAll<HTMLElement>(
-                    ".match-row:not(.match-heading)",
-                  ) || [],
-                );
-                const index = rows.findIndex((row) => {
-                  const r = row.getBoundingClientRect();
-                  return e.clientY >= r.top && e.clientY <= r.bottom;
-                });
-                if (index >= 0) {
-                  setTarget(index);
-                  move(pointer.current.id, index);
-                }
-              }}
-              onPointerUp={(e) => {
-                if (pointer.current?.pointerId === e.pointerId) {
-                  pointer.current = null;
-                  setDragged(null);
-                  setTarget(null);
-                  e.currentTarget.releasePointerCapture?.(e.pointerId);
-                }
-              }}
-              onPointerCancel={() => {
-                pointer.current = null;
-                setDragged(null);
-                setTarget(null);
-              }}
+              onClickCapture={drag.click}
               draggable={false}
-              onDragStart={(e) => {
-                if (!answer || disabled) {
-                  e.preventDefault();
-                  return;
-                }
-                setDragged(answer.id);
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", answer.id);
-              }}
-              onDragEnd={() => {
-                setDragged(null);
-                setTarget(null);
-              }}
+              onDragStart={(e) => e.preventDefault()}
             >
               {answer && (
                 <>

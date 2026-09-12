@@ -15,12 +15,13 @@ describe("fixed test generation", () => {
   it("generates every requested question type with stable correct choices and grades them", () => {
     const test = makeTest(
       cards,
-      8,
+      6,
       ["choice", "written", "boolean", "matching"],
       "definitions",
     );
     expect(test.filter((q) => q.kind === "matching")).toHaveLength(1);
-    expect(test.find((q) => q.kind === "matching")?.matchRows).toHaveLength(2);
+    expect(test.find((q) => q.kind === "matching")?.matchRows).toHaveLength(3);
+    expect(test).toHaveLength(6);
     expect(new Set(testRows(test).map((q) => q.card.id)).size).toBe(8);
     for (const q of testRows(test)) {
       const answer =
@@ -42,13 +43,14 @@ describe("fixed test generation", () => {
           newCard(`Term ${i}`, `Answer ${i}`),
         );
         const test = makeTest(pool, n, ["matching"], "definitions");
-        expect(testRows(test)).toHaveLength(n);
-        expect(new Set(testRows(test).map((q) => q.card.id)).size).toBe(n);
+        expect(test).toHaveLength(Math.floor(n / 3));
+        expect(new Set(testRows(test).map((q) => q.card.id)).size).toBe(
+          testRows(test).length,
+        );
+        if (n >= 3) expect(testRows(test)).toHaveLength(n);
         for (const group of test.filter((q) => q.kind === "matching")) {
-          expect(group.matchRows!.length).toBeGreaterThanOrEqual(
-            n === 2 ? 2 : 3,
-          );
-          expect(group.matchRows!.length).toBeLessThanOrEqual(5);
+          expect(group.matchRows!.length).toBeGreaterThanOrEqual(3);
+          expect(group.matchRows!.length).toBeLessThanOrEqual(6);
           expect(group.initialOrder).not.toEqual(
             group.matchRows!.map((q) => q.card.id),
           );
@@ -58,7 +60,7 @@ describe("fixed test generation", () => {
         }
         if (n === 6)
           expect(test.map((q) => q.matchRows?.length)).toEqual([3, 3]);
-        if (n === 1) expect(test[0].kind).not.toBe("matching");
+        if (n < 3) expect(test).toEqual([]);
       }
   });
   it("deduplicates normalized cards and keeps ambiguous sides out of each matching group", () => {
@@ -70,7 +72,7 @@ describe("fixed test generation", () => {
       newCard("Water", "water"),
     ];
     const test = makeTest(pool, 5, ["matching"], "definitions");
-    expect(testRows(test)).toHaveLength(4);
+    expect(testRows(test)).toHaveLength(3);
     for (const q of test.filter((q) => q.matchRows))
       expect(
         new Set(q.matchRows!.map((row) => row.answer.toLowerCase())).size,
@@ -97,4 +99,38 @@ describe("fixed test generation", () => {
     expect(q.truth).toBe(true);
     expect(testCorrect(q, "true")).toBe(true);
   });
+});
+it.each([
+  [30, 10, 3],
+  [40, 10, 4],
+  [50, 10, 5],
+  [60, 10, 6],
+  [24, 8, 3],
+])(
+  "distributes %i cards into %i actual matching questions",
+  (available, boards, pairs) => {
+    const pool = Array.from({ length: available }, (_, i) =>
+      newCard("Front " + i, "Back " + i),
+    );
+    const result = makeTest(pool, 10, ["matching"], "definitions");
+    expect(result).toHaveLength(boards);
+    expect(result.every((q) => q.matchRows?.length === pairs)).toBe(true);
+  },
+);
+it("fills requested slots with enabled non-matching types without tiny boards", () => {
+  const pool = Array.from({ length: 24 }, (_, i) =>
+    newCard("Front " + i, "Back " + i),
+  );
+  const result = makeTest(pool, 10, ["matching", "written"], "definitions");
+  expect(result).toHaveLength(10);
+  expect(
+    result
+      .filter((q) => q.kind === "matching")
+      .every((q) => q.matchRows!.length >= 3 && q.matchRows!.length <= 6),
+  ).toBe(true);
+  expect(
+    makeTest(pool.slice(0, 2), 2, ["matching", "written"], "definitions").every(
+      (q) => q.kind === "written",
+    ),
+  ).toBe(true);
 });

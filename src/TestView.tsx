@@ -149,9 +149,9 @@ function TestSession({
           </div>
           <div className="config-fields">
             <label>
-              Cards to test
+              Questions requested
               <input
-                aria-label="Number of cards"
+                aria-label="Number of questions"
                 type="number"
                 min={1}
                 max={deck.cards.length}
@@ -215,6 +215,13 @@ function TestSession({
               }
               onClick={() => {
                 const generated = makeTest(deck.cards, count, kinds, direction);
+                if (!generated.length) {
+                  setError(
+                    "Matching needs at least 3 distinct usable pairs. Enable another question type or add cards.",
+                  );
+                  return;
+                }
+                setError("");
                 setQuestions(generated);
                 setAnswers(
                   Object.fromEntries(

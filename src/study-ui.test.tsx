@@ -111,6 +111,7 @@ describe("study interactions", () => {
       screen.getByRole("button", { name: "Open folder Art class" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByLabelText("Change cover image"));
     fireEvent.click(screen.getByRole("button", { name: "Choose preset" }));
     fireEvent.click(screen.getByRole("button", { name: "Spectrum Gradient" }));
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
@@ -186,7 +187,9 @@ describe("study interactions", () => {
     );
     expect(document.activeElement?.tagName).toBe("BUTTON");
     expect(document.activeElement?.closest(".matching-board")).toBeTruthy();
-    const first = document.querySelector<HTMLElement>(".worksheet-question")!;
+    const first = Array.from(
+      document.querySelectorAll<HTMLElement>(".worksheet-question"),
+    ).find((q) => q.querySelector('input[type="radio"]'))!;
     fireEvent.click(within(first).getAllByRole("radio")[0]);
     expect(within(first).queryByText(/Your answer:/)).toBeNull();
     fireEvent.click(

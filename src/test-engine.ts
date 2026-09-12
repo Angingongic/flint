@@ -35,14 +35,13 @@ export const cardKey = (card: Card) =>
     card.questionAudio || "",
     card.answerAudio || "",
   ]);
-export function matchingGroupSize(remaining: number): number {
-  if (remaining < 2) return 0;
-  if (remaining <= 4) return remaining;
-  // Prefer normal groups on both sides of the split; never leave a singleton.
-  const sizes = [3, 4, 5].filter(
-    (n) => remaining - n !== 1 && remaining - n !== 2,
-  );
-  return sizes[Math.floor(Math.random() * sizes.length)];
+export function matchingGroupSize(
+  remaining: number,
+  boards = Math.floor(remaining / 3),
+): number {
+  return remaining < 3 || boards < 1
+    ? 0
+    : Math.min(6, Math.floor(remaining / boards));
 }
 export function shuffledAnswerOrder(ids: string[]): string[] {
   const order = shuffle(ids);
@@ -69,7 +68,7 @@ export function makeTest(
     ids.add(card.id);
     return true;
   });
-  const selected = shuffle(eligible).slice(0, count);
+  const selected = shuffle(eligible);
   const make = (card: Card, kind: TestKind, index: number): TestQuestion => {
     const reverse =
       direction === "terms" ||
@@ -111,23 +110,20 @@ export function makeTest(
       truth: claimed.id === card.id,
     };
   };
-  const questions: TestQuestion[] = [],
-    pool: Card[] = [];
-  selected.forEach((card, index) => {
-    const kind = kinds[index % kinds.length];
-    if (kind === "matching") pool.push(card);
-    else questions.push(make(card, kind, index));
-  });
-  const fallback = (card: Card) =>
-    make(
-      card,
-      kinds.find((kind) => kind === "written" || kind === "choice") ||
-        (sides(card, direction === "terms").answer.trim()
-          ? "written"
-          : "choice"),
-      questions.length,
-    );
-  while (pool.length) {
+  const questions: TestQuestion[] = [];
+  const pool = [...selected];
+  const singles = kinds.filter((kind) => kind !== "matching");
+  const target = Math.min(count, eligible.length);
+  let boards = !kinds.includes("matching")
+    ? 0
+    : singles.length
+      ? Math.min(
+          Math.ceil(target / kinds.length),
+          Math.floor((eligible.length - target) / 2),
+        )
+      : Math.min(count, Math.floor(eligible.length / 3));
+  const singleSlots = singles.length ? target - boards : 0;
+  while (boards > 0) {
     // Remove ambiguity inside each group: identical visible sides cannot be graded uniquely.
     const unique: Card[] = [],
       deferred: Card[] = [];
@@ -153,11 +149,11 @@ export function makeTest(
       answers.add(a);
       unique.push(card);
     }
-    const size = matchingGroupSize(unique.length);
-    if (!size) {
-      questions.push(...pool.map(fallback));
-      break;
-    }
+    const size = Math.min(
+      unique.length,
+      matchingGroupSize(pool.length - singleSlots, boards),
+    );
+    if (size < 3) break;
     const group = unique.splice(0, size);
     pool.splice(0, pool.length, ...unique, ...deferred);
     const rows = group.map((card, index) => make(card, "matching", index));
@@ -168,11 +164,23 @@ export function makeTest(
       audio: q.answerAudio,
     }));
     rows.forEach((row) => (row.choices = choices));
+    boards--;
     questions.push({
       ...rows[0],
       matchRows: rows,
       initialOrder: shuffledAnswerOrder(rows.map((q) => q.card.id)),
     });
+  }
+  if (singles.length) {
+    while (pool.length && questions.length < target) {
+      questions.push(
+        make(
+          pool.shift()!,
+          singles[questions.length % singles.length],
+          questions.length,
+        ),
+      );
+    }
   }
   return questions;
 }

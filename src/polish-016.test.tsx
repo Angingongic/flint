@@ -1,3 +1,4 @@
+import { mouseDrag } from "./test-drag";
 // @vitest-environment jsdom
 import { useState } from "react";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
@@ -109,16 +110,27 @@ describe("Library and study polish", () => {
           <TestView {...props} studyMissed={() => {}} />
         ),
       );
-      fireEvent.change(screen.getByLabelText("Study scope"), {
-        target: { value: "starred" },
-      });
+      if (mode === "Test")
+        fireEvent.change(screen.getByLabelText("Study scope"), {
+          target: { value: "starred" },
+        });
+      else {
+        fireEvent.click(screen.getByLabelText(mode + " settings"));
+        const check = screen.getByLabelText(
+          mode === "Learn"
+            ? "Practice starred cards only"
+            : "Study starred cards only",
+        ) as HTMLInputElement;
+        if (!check.checked) fireEvent.click(check);
+      }
       if (mode === "Flashcards") {
         expect(screen.getByText("1 / 1")).toBeTruthy();
         expect(screen.getByRole("heading", { name: "Second" })).toBeTruthy();
       }
       if (mode === "Test")
         expect(
-          (screen.getByLabelText("Number of cards") as HTMLInputElement).max,
+          (screen.getByLabelText("Number of questions") as HTMLInputElement)
+            .max,
         ).toBe("1");
       if (mode === "Learn") {
         fireEvent.click(await screen.findByRole("button", { name: "Start" }));
@@ -140,9 +152,19 @@ describe("Library and study polish", () => {
           <TestView {...props} deck={deck} studyMissed={() => {}} />
         ),
       );
-      fireEvent.change(screen.getByLabelText("Study scope"), {
-        target: { value: "starred" },
-      });
+      if (mode === "Test")
+        fireEvent.change(screen.getByLabelText("Study scope"), {
+          target: { value: "starred" },
+        });
+      else {
+        fireEvent.click(screen.getByLabelText(mode + " settings"));
+        const check = screen.getByLabelText(
+          mode === "Learn"
+            ? "Practice starred cards only"
+            : "Study starred cards only",
+        ) as HTMLInputElement;
+        if (!check.checked) fireEvent.click(check);
+      }
       expect(screen.getByText("No starred cards yet")).toBeTruthy();
     },
   );
@@ -185,9 +207,7 @@ describe("Library and study polish", () => {
       bottom: 200,
       height: 200,
     } as DOMRect);
-    fireEvent.dragStart(wraps[1], { dataTransfer: transfer() });
-    fireEvent.dragOver(wraps[0], { clientY: 10, dataTransfer: transfer() });
-    fireEvent.drop(wraps[0], { dataTransfer: transfer() });
+    mouseDrag(wraps[1], wraps[0], true);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(loadLibraryPreferences().order.slice(-2)).toEqual(["two", "one"]);
     view.unmount();
@@ -204,7 +224,12 @@ describe("Library and study polish", () => {
     const menu = card.querySelector("details")!;
     fireEvent.contextMenu(card);
     expect(menu.open).toBe(true);
-    fireEvent.click(within(menu).getByRole("button", { name: "Pin" }));
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "Item actions" })).getByRole(
+        "button",
+        { name: "Pin" },
+      ),
+    );
     await waitFor(() =>
       expect(JSON.parse(localStorage.getItem("qa-decks")!)[0].meta.pinned).toBe(
         true,
@@ -215,7 +240,13 @@ describe("Library and study polish", () => {
       .closest("article")!;
     fireEvent.contextMenu(folder);
     const folderMenu = folder.querySelector("details")!;
-    fireEvent.click(within(folderMenu).getByRole("button", { name: "Pin" }));
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "Item actions" })).getByRole(
+        "button",
+        { name: "Pin" },
+      ),
+    );
+    fireEvent.contextMenu(folder);
     fireEvent.change(screen.getByLabelText("Color for folder Folder"), {
       target: { value: "#6aa9dd" },
     });
@@ -230,17 +261,13 @@ describe("Library and study polish", () => {
   });
   it("moves a set onto a folder without changing its cards", async () => {
     render(<Library />);
-    fireEvent.dragStart(
+    mouseDrag(
       screen
         .getByRole("button", { name: "Open One" })
         .closest(".deck-drop-wrap")!,
-      { dataTransfer: transfer() },
-    );
-    fireEvent.drop(
       screen
         .getByRole("button", { name: "Open folder Folder" })
         .closest("article")!,
-      { dataTransfer: transfer() },
     );
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Open One" })).toBeNull(),
@@ -339,7 +366,7 @@ describe("Library and study polish", () => {
     expect(screen.getByRole("button", { name: /Play Choice/ })).toBeTruthy();
   });
 });
-it("reorders folders and their contained sets independently across remount", () => {
+it("reorders folders and their contained sets independently across remount", async () => {
   vi.stubGlobal("DragEvent", MouseEvent);
   const initial = [
     { ...deck, meta: { folder: "Alpha" } },
@@ -358,13 +385,12 @@ it("reorders folders and their contained sets independently across remount", () 
     bottom: 200,
     height: 200,
   } as DOMRect);
-  fireEvent.dragStart(beta, { dataTransfer: transfer() });
-  fireEvent.dragOver(alpha, { clientY: 10, dataTransfer: transfer() });
-  fireEvent.drop(alpha, { dataTransfer: transfer() });
+  mouseDrag(beta, alpha, true);
   expect(loadLibraryPreferences().order).toEqual([
     "folder:Beta",
     "folder:Alpha",
   ]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
   fireEvent.click(screen.getByRole("button", { name: "Open folder Alpha" }));
   const cards = document.querySelectorAll<HTMLElement>(".deck-drop-wrap");
   vi.spyOn(cards[0], "getBoundingClientRect").mockReturnValue({
@@ -372,9 +398,7 @@ it("reorders folders and their contained sets independently across remount", () 
     bottom: 200,
     height: 200,
   } as DOMRect);
-  fireEvent.dragStart(cards[1], { dataTransfer: transfer() });
-  fireEvent.dragOver(cards[0], { clientY: 10, dataTransfer: transfer() });
-  fireEvent.drop(cards[0], { dataTransfer: transfer() });
+  mouseDrag(cards[1], cards[0], true);
   view.unmount();
   view = render(<Library initial={initial} />);
   expect(document.querySelector(".folder-open h3")?.textContent?.trim()).toBe(

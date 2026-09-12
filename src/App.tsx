@@ -1,3 +1,10 @@
+import {
+  ImageField,
+  ManagedImage,
+  CoverEditor,
+  ImageDestination,
+  useImageDragFeedback,
+} from "./ImageField";
 import { InsertMedia } from "./InsertMedia";
 import { swapSides } from "./editing";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -347,6 +354,46 @@ export function App() {
     go("Create");
   };
   const setActions: SetActions = {
+    saveCard: async (deckId, card, starred) => {
+      const current = decksRef.current.find((d) => d.id === deckId);
+      const previous = current?.cards.find((c) => c.id === card.id);
+      if (!current || !previous) throw Error("Card no longer exists");
+      const apply = async (content: typeof card, star: boolean) => {
+        const latest = decksRef.current.find((d) => d.id === deckId);
+        if (!latest?.cards.some((c) => c.id === card.id))
+          throw Error("Card no longer exists");
+        const stars = (latest.meta?.starredCards || []).filter(
+          (id) => id !== card.id,
+        );
+        const next = {
+          ...latest,
+          cards: latest.cards.map((c) =>
+            c.id === card.id
+              ? {
+                  ...c,
+                  question: content.question,
+                  answer: content.answer,
+                  questionImage: content.questionImage,
+                  answerImage: content.answerImage,
+                  questionAudio: content.questionAudio,
+                  answerAudio: content.answerAudio,
+                }
+              : c,
+          ),
+          meta: {
+            ...latest.meta,
+            starredCards: star ? [...stars, card.id] : stars,
+          },
+        };
+        await saveNativeDeck(next);
+        setDecks((old) => old.map((d) => (d.id === deckId ? next : d)));
+        setStudyDeck((old) => (old?.id === deckId ? next : old));
+      };
+      await apply(card, starred);
+      undoActions.current.push(() =>
+        apply(previous, !!current.meta?.starredCards?.includes(card.id)),
+      );
+    },
     remove: async (id) => {
       if (!decksRef.current.find((d) => d.id === id)?.meta?.deletedAt)
         throw Error("Only trashed sets can be removed");
@@ -1110,15 +1157,6 @@ function TypedSession({
     </div>
   );
 }
-function ManagedImage({ name, alt }: { name?: string | null; alt: string }) {
-  const [src, setSrc] = useState("");
-  useEffect(() => {
-    mediaUrl(name)
-      .then(setSrc)
-      .catch(() => setSrc(""));
-  }, [name]);
-  return src ? <img className="study-image" src={src} alt={alt} /> : null;
-}
 
 function ImportPage({ onImport }: { onImport: (d: Deck) => Promise<void> }) {
   const [duplicateImport, setDuplicateImport] = useState<Deck | null>(null);
@@ -1359,179 +1397,6 @@ function ImportPage({ onImport }: { onImport: (d: Deck) => Promise<void> }) {
     </>
   );
 }
-function ImageField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value?: string | null;
-  onChange: (value: string | null) => void;
-}) {
-  const input = useRef<HTMLInputElement>(null);
-  const [crop, setCrop] = useState(false);
-  const reduced = useReducedMotion();
-  const removalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [removing, setRemoving] = useState(false);
-  const [removedPreview, setRemovedPreview] = useState<string | null>(null);
-  useEffect(
-    () => () => {
-      if (removalTimer.current) clearTimeout(removalTimer.current);
-    },
-    [],
-  );
-  const [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [large, setLarge] = useState(false);
-  const process = async (file: File) => {
-    setError("");
-    if (
-      !/^image\/(png|jpeg|webp)$/.test(file.type) ||
-      file.size > 25 * 1024 * 1024
-    ) {
-      setError("Choose a PNG, JPEG or WebP image under 25 MB.");
-      return;
-    }
-    setBusy(true);
-    try {
-      if (inTauri()) onChange(await saveMediaBytes(file));
-      else
-        onChange(
-          await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          }),
-        );
-      notify("Image added");
-      return true;
-    } catch {
-      setError("Could not attach the image. Please try again.");
-      notify("Could not attach the image", "error");
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div
-      className="attachment"
-      tabIndex={0}
-      aria-label={label + " attachment"}
-      title="Choose, drop, or paste PNG, JPEG or WebP"
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        if (e.dataTransfer.files[0]) void process(e.dataTransfer.files[0]);
-      }}
-      onPaste={(e) => {
-        if (e.clipboardData.files[0]) {
-          e.preventDefault();
-          void process(e.clipboardData.files[0]);
-        }
-      }}
-    >
-      {crop && value && (
-        <ImageCrop
-          name={value}
-          onClose={() => setCrop(false)}
-          onApply={async (file) => {
-            if (!(await process(file))) throw Error("Image save failed");
-          }}
-        />
-      )}
-      <input
-        ref={input}
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        style={{ display: "none" }}
-        onChange={(e) => {
-          if (e.target.files?.[0]) void process(e.target.files[0]);
-          e.target.value = "";
-        }}
-      />
-      {(value || removedPreview) && (
-        <button
-          className={"attachment-thumb" + (removing ? " removing" : "")}
-          onClick={() => setLarge(true)}
-          aria-label={"View larger " + label}
-        >
-          <ManagedImage name={value || removedPreview} alt={label} />
-        </button>
-      )}
-      <div className="attachment-actions">
-        <button
-          type="button"
-          className="secondary"
-          disabled={busy}
-          onClick={() => input.current?.click()}
-        >
-          {busy
-            ? "Attaching…"
-            : value
-              ? "Replace"
-              : label === "cover image"
-                ? "Upload image"
-                : "+ Image"}
-        </button>
-        {value && (
-          <>
-            <button
-              className="secondary"
-              disabled={removing}
-              onClick={() => {
-                setRemovedPreview(value || null);
-                onChange(null);
-                setRemoving(true);
-                removalTimer.current = setTimeout(
-                  () => {
-                    setRemovedPreview(null);
-                    setRemoving(false);
-                  },
-                  reduced ? 0 : motion.panel,
-                );
-              }}
-            >
-              {label === "cover image" ? "Use Flint preset" : "Remove"}
-            </button>
-            <button className="secondary" onClick={() => setLarge(true)}>
-              View larger
-            </button>
-            <button
-              className="secondary"
-              disabled={busy}
-              onClick={() => setCrop(true)}
-            >
-              Crop / reposition
-            </button>
-          </>
-        )}
-      </div>
-      {error && <small role="alert">{error}</small>}
-      {large && (
-        <div
-          className="image-lightbox"
-          role="dialog"
-          aria-modal="true"
-          aria-label={label}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setLarge(false);
-          }}
-        >
-          <button
-            autoFocus
-            className="secondary"
-            onClick={() => setLarge(false)}
-          >
-            Close preview
-          </button>
-          <ManagedImage name={value} alt={label} />
-        </div>
-      )}
-    </div>
-  );
-}
 function CreatePage({
   onCreate,
   initialDeck,
@@ -1539,6 +1404,7 @@ function CreatePage({
   onCreate: (d: Deck) => Promise<void>;
   initialDeck: Deck | null;
 }) {
+  useImageDragFeedback();
   const reduced = useReducedMotion();
   const [duplicateDraft, setDuplicateDraft] = useState<Deck | null>(null),
     [bulkText, setBulkText] = useState("");
@@ -1913,18 +1779,9 @@ function CreatePage({
           <span />
           <div>
             <b>Cover</b>
-            <CoverPicker
+            <CoverEditor
               deck={{ id: setId, title: title || "New set", coverImage }}
               onChange={setCoverImage}
-            />
-            <ImageField
-              label="cover image"
-              value={
-                coverImage?.startsWith("flint:preset/") ? null : coverImage
-              }
-              onChange={(value) =>
-                setCoverImage(value || presetFor({ id: setId }).id)
-              }
             />
           </div>
           <span />
@@ -2082,69 +1939,75 @@ function CreatePage({
                 </button>
                 {(["question", "answer"] as const).map((side) => (
                   <section key={side}>
-                    <label>
-                      {side === "question" ? "Front" : "Back"}
-                      <textarea
-                        value={c[side]}
-                        placeholder={
-                          side === "question"
-                            ? "Add front text"
-                            : "Add back text"
-                        }
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setCards((x) =>
-                            x.map((v) =>
-                              v.draftId === c.draftId
-                                ? { ...v, [side]: value }
-                                : v,
-                            ),
-                          );
-                        }}
-                      />
-                    </label>
-                    <InsertMedia>
-                      <AudioField
-                        label={side + " audio"}
-                        value={
-                          side === "question" ? c.questionAudio : c.answerAudio
-                        }
-                        onChange={(value) =>
-                          setCards((old) =>
-                            old.map((v) =>
-                              v.draftId === c.draftId
-                                ? {
-                                    ...v,
-                                    [side === "question"
-                                      ? "questionAudio"
-                                      : "answerAudio"]: value,
-                                  }
-                                : v,
-                            ),
-                          )
-                        }
-                      />
-                      <ImageField
-                        label={side + " image"}
-                        value={
-                          side === "question" ? c.questionImage : c.answerImage
-                        }
-                        onChange={(value) =>
-                          setCards((x) =>
-                            x.map((v) =>
-                              v.draftId === c.draftId
-                                ? {
-                                    ...v,
-                                    [side === "question"
-                                      ? "questionImage"
-                                      : "answerImage"]: value,
-                                  }
-                                : v,
-                            ),
-                          )
-                        }
-                      />
-                    </InsertMedia>
+                    <ImageDestination>
+                      <label>
+                        {side === "question" ? "Front" : "Back"}
+                        <textarea
+                          value={c[side]}
+                          placeholder={
+                            side === "question"
+                              ? "Add front text"
+                              : "Add back text"
+                          }
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setCards((x) =>
+                              x.map((v) =>
+                                v.draftId === c.draftId
+                                  ? { ...v, [side]: value }
+                                  : v,
+                              ),
+                            );
+                          }}
+                        />
+                      </label>
+                      <InsertMedia>
+                        <AudioField
+                          label={side + " audio"}
+                          value={
+                            side === "question"
+                              ? c.questionAudio
+                              : c.answerAudio
+                          }
+                          onChange={(value) =>
+                            setCards((old) =>
+                              old.map((v) =>
+                                v.draftId === c.draftId
+                                  ? {
+                                      ...v,
+                                      [side === "question"
+                                        ? "questionAudio"
+                                        : "answerAudio"]: value,
+                                    }
+                                  : v,
+                              ),
+                            )
+                          }
+                        />
+                        <ImageField
+                          label={side + " image"}
+                          value={
+                            side === "question"
+                              ? c.questionImage
+                              : c.answerImage
+                          }
+                          onChange={(value) =>
+                            setCards((x) =>
+                              x.map((v) =>
+                                v.draftId === c.draftId
+                                  ? {
+                                      ...v,
+                                      [side === "question"
+                                        ? "questionImage"
+                                        : "answerImage"]: value,
+                                    }
+                                  : v,
+                              ),
+                            )
+                          }
+                        />
+                      </InsertMedia>
+                    </ImageDestination>
                   </section>
                 ))}
               </div>
@@ -2254,7 +2117,6 @@ function SettingsPage({
   displayName: string;
   setDisplayName: (x: string) => void;
 }) {
-  const [accents, setAccents] = useState(ignoreAccents);
   const [matching, setMatching] = useState(
     localStorage.getItem("flint-matching") || "Flexible",
   );
@@ -2328,23 +2190,6 @@ function SettingsPage({
             <option>Exact</option>
             <option>Minor typo tolerance</option>
           </select>
-        </div>
-        <div className="panel setting">
-          <label>
-            <b>Ignore accents</b>
-            <p>Accept diacritic differences independently of typo tolerance.</p>
-            <input
-              type="checkbox"
-              checked={accents}
-              onChange={(e) => {
-                setAccents(e.target.checked);
-                localStorage.setItem(
-                  "flint-ignore-accents",
-                  String(e.target.checked),
-                );
-              }}
-            />
-          </label>
         </div>
         <UpdateSettings />
         <BackupSettings />

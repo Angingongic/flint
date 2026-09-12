@@ -1,3 +1,4 @@
+import { SingleCardEditor } from "./SingleCardEditor";
 import { StudyScope } from "./StudyScope";
 import { useEffect, useRef, useState } from "react";
 import { Deck } from "./lib";
@@ -115,12 +116,23 @@ export function SetOverview({
   actions?: SetActions;
   back?: () => void;
 }) {
+  const [editingCard, setEditingCard] = useState<Deck["cards"][number] | null>(
+    null,
+  );
   const due = deck.cards.filter(
     (c) => !c.dueAt || new Date(c.dueAt) <= new Date(),
   ).length;
   const mastered = deck.cards.filter((c) => c.status === "Mastered").length;
   return (
     <div className="set-overview">
+      {editingCard && actions?.saveCard && (
+        <SingleCardEditor
+          card={editingCard}
+          starred={!!deck.meta?.starredCards?.includes(editingCard.id)}
+          close={() => setEditingCard(null)}
+          save={(card, starred) => actions.saveCard!(deck.id, card, starred)}
+        />
+      )}
       <div className="set-hero">
         <SetCover deck={deck} className="hero-art" />
         <div className="set-hero-bar">
@@ -265,7 +277,8 @@ export function SetOverview({
               <button
                 className="icon"
                 aria-label={"Edit card " + (index + 1)}
-                onClick={edit}
+                onClick={() => setEditingCard(card)}
+                disabled={!actions?.saveCard}
               >
                 <Edit3 size={16} />
               </button>
@@ -527,7 +540,15 @@ function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
   );
 }
 
-function WaveLearnSession({ deck, done }: { deck: Deck; done: () => void }) {
+function WaveLearnSession({
+  deck,
+  done,
+  accents,
+}: {
+  deck: Deck;
+  done: () => void;
+  accents: boolean;
+}) {
   const [state, setState] = useState<WaveState | null>(null),
     [loaded, setLoaded] = useState(false),
     [started, setStarted] = useState(false);
@@ -725,7 +746,7 @@ function WaveLearnSession({ deck, done }: { deck: Deck; done: () => void }) {
           ? selectedId === card.id
             ? "CORRECT"
             : "INCORRECT"
-          : grade(value, side.answer, options.grading);
+          : grade(value, side.answer, options.grading, accents);
     const ok = result === "CORRECT" || result === "CLOSE";
     const display = {
       question,
@@ -1217,7 +1238,7 @@ function WaveLearnSession({ deck, done }: { deck: Deck; done: () => void }) {
 export { TestView as WorksheetTest } from "./TestView";
 export function Flashcards(props: { deck: Deck; done: () => void }) {
   return (
-    <StudyScope {...props}>
+    <StudyScope {...props} mode="Flashcards">
       {(deck) => <FlashcardsSession deck={deck} done={props.done} />}
     </StudyScope>
   );
@@ -1226,6 +1247,7 @@ export function WaveLearn(props: { deck: Deck; done: () => void }) {
   return (
     <StudyScope
       {...props}
+      mode="Learn"
       deck={{
         ...props.deck,
         cards: props.deck.cards.filter(
@@ -1235,7 +1257,9 @@ export function WaveLearn(props: { deck: Deck; done: () => void }) {
         ),
       }}
     >
-      {(deck) => <WaveLearnSession deck={deck} done={props.done} />}
+      {(deck, accents) => (
+        <WaveLearnSession deck={deck} done={props.done} accents={accents} />
+      )}
     </StudyScope>
   );
 }
