@@ -313,7 +313,7 @@ describe("Library and study polish", () => {
       original,
     );
   });
-  it("wires editor swap and Undo and offers only Image/Audio Insert", async () => {
+  it("wires editor swap and Undo and offers the supported multimedia Insert actions", async () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Create" }));
     const front = screen.getAllByPlaceholderText(
@@ -337,7 +337,7 @@ describe("Library and study polish", () => {
       within(insert)
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["Image", "Audio"]);
+    ).toEqual(["Image", "GIF", "Audio file", "Record audio", "Video"]);
   });
   it("renders image/audio Learn choices without blank rectangles or changing recall direction", async () => {
     const mediaDeck = {

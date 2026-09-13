@@ -1,5 +1,6 @@
+import { editableTarget } from "./editing";
 import { StudyScope } from "./StudyScope";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Matching } from "./Matching";
 import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
 import { gradeAnswer } from "./lib";
@@ -52,7 +53,40 @@ function TestSession({
   const questionCorrect = (q: TestQuestion) =>
     (q.matchRows || [q]).every((row) => testCorrect(row, answers[row.card.id]));
   const correct = (questions || []).filter(questionCorrect);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (
+        e.defaultPrevented ||
+        e.repeat ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey ||
+        editableTarget(e.target) ||
+        submitted ||
+        saving ||
+        !/^[1-4]$/.test(e.key)
+      )
+        return;
+      const visible = (questions || []).filter((q) => {
+        const r = refs.current[q.card.id]?.getBoundingClientRect();
+        return q.kind === "choice" && r && r.bottom > 0 && r.top < innerHeight;
+      });
+      const q = visible.find((q) => q.card.id === current) || visible[0];
+      const choice = q?.choices[Number(e.key) - 1];
+      if (q && choice && !checked.includes(q.card.id)) {
+        e.preventDefault();
+        update(q.card.id, choice.id);
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [questions, current, submitted, saving, checked]);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("flint-audio-play"));
+  }, [current]);
   const jump = (id: string) => {
+    window.dispatchEvent(new CustomEvent("flint-audio-play"));
+
     const group = questions?.find((q) =>
       q.matchRows?.some((row) => row.card.id === id),
     );
@@ -75,6 +109,7 @@ function TestSession({
       setWarning(true);
       return;
     }
+    window.dispatchEvent(new CustomEvent("flint-audio-play"));
     lock.current = true;
     setSaving(true);
     setError("");
@@ -378,6 +413,7 @@ function TestSession({
                         <StudyImage
                           name={q.promptImage}
                           audio={q.promptAudio}
+                          video={q.promptVideo}
                           alt="Question visual"
                         />
                       )}
@@ -397,6 +433,7 @@ function TestSession({
                             text: row.prompt,
                             image: row.promptImage,
                             audio: row.promptAudio,
+                            video: row.promptVideo,
                           }))}
                           right={q.choices}
                           termFirst={direction !== "terms"}
@@ -425,6 +462,7 @@ function TestSession({
                             <StudyImage
                               name={q.claimImage}
                               audio={q.claimAudio}
+                              video={q.claimVideo}
                               alt="Proposed answer"
                             />
                           </div>
@@ -456,6 +494,7 @@ function TestSession({
                               <StudyImage
                                 name={c.image}
                                 audio={c.audio}
+                                video={c.video}
                                 alt="Answer choice visual"
                               />
                             </label>
@@ -501,6 +540,7 @@ function TestSession({
                           <StudyImage
                             name={q.answerImage}
                             audio={q.answerAudio}
+                            video={q.answerVideo}
                             alt="Answer visual"
                           />
                         </div>

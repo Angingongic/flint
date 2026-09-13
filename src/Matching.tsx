@@ -1,3 +1,4 @@
+import { useReorderMotion } from "./reorder-motion";
 import { usePointerDrag } from "./pointer-drag";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
@@ -7,6 +8,7 @@ export type MatchItem = {
   text: string;
   image?: string | null;
   audio?: string | null;
+  video?: string | null;
 };
 export function moveAnswer(order: string[], from: number, to: number) {
   if (
@@ -44,32 +46,8 @@ export function Matching({
     [announcement, setAnnouncement] = useState("");
   const handles = useRef<Record<string, HTMLButtonElement | null>>({});
   const board = useRef<HTMLElement>(null),
-    pointer = useRef<{ id: string; pointerId: number } | null>(null),
-    positions = useRef(new Map<string, number>());
-  useLayoutEffect(() => {
-    const next = new Map<string, number>();
-    board.current
-      ?.querySelectorAll<HTMLElement>("[data-answer-id]")
-      .forEach((el) => {
-        const id = el.dataset.answerId!,
-          top = el.getBoundingClientRect().top,
-          old = positions.current.get(id);
-        next.set(id, top);
-        if (
-          old !== undefined &&
-          old !== top &&
-          !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-        )
-          el.animate?.(
-            [
-              { transform: `translateY(${old - top}px)` },
-              { transform: "translateY(0)" },
-            ],
-            { duration: 160, easing: "ease-out" },
-          );
-      });
-    positions.current = next;
-  }, [order]);
+    pointer = useRef<{ id: string; pointerId: number } | null>(null);
+  useReorderMotion(board, "[data-answer-id]", order.join("|"));
   const focusAfterMove = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (focusAfterMove.current) {
@@ -203,6 +181,7 @@ export function Matching({
               <StudyImage
                 name={item.image}
                 audio={item.audio}
+                video={item.video}
                 alt={"Prompt " + (index + 1)}
               />
             </div>
@@ -245,6 +224,7 @@ export function Matching({
                     <StudyImage
                       name={answer.image}
                       audio={answer.audio}
+                      video={answer.video}
                       alt={"Answer in row " + (index + 1)}
                     />
                   </div>
@@ -262,6 +242,7 @@ export function Matching({
                       <StudyImage
                         name={right.find((r) => r.id === item.id)?.image}
                         audio={right.find((r) => r.id === item.id)?.audio}
+                        video={right.find((r) => r.id === item.id)?.video}
                         alt="Correct answer visual"
                       />
                     </>

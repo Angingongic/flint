@@ -1,3 +1,6 @@
+import { relocateFolder, folderName } from "./folders";
+import { relocateLibraryFolder } from "./native";
+import { VideoField } from "./Video";
 import {
   ImageField,
   ManagedImage,
@@ -134,6 +137,9 @@ const load = () => {
   }
 };
 export function App() {
+  const [newSetFolder, setNewSetFolder] = useState<string | undefined>(
+    undefined,
+  );
   const [portableBusy, setPortableBusy] = useState(false);
   const [commands, setCommands] = useState(false),
     [shortcutHelp, setShortcutHelp] = useState(false);
@@ -152,25 +158,37 @@ export function App() {
     localStorage.getItem("flint-display-name") || "",
   );
   const [appError, setAppError] = useState("");
-  const undoActions = useRef<Array<() => Promise<void>>>([]);
-  const undoBusy = useRef(false);
-  const undoLibrary = async () => {
+  type Change = { undo: () => Promise<void>; redo: () => Promise<void> };
+  const undoActions = useRef<Change[]>([]),
+    redoActions = useRef<Change[]>([]),
+    undoBusy = useRef(false);
+  const recordUndo = (undo: Change["undo"], redo: Change["redo"]) => {
+    undoActions.current.push({ undo, redo });
+    if (undoActions.current.length > 100) undoActions.current.shift();
+    redoActions.current = [];
+  };
+  const replayLibrary = async (redo = false) => {
     if (undoBusy.current) return;
-    const action = undoActions.current.pop();
+    const from = redo ? redoActions : undoActions,
+      to = redo ? undoActions : redoActions,
+      action = from.current.pop();
     if (!action) return;
     undoBusy.current = true;
     try {
-      await action();
-      notify("Change undone");
+      await (redo ? action.redo() : action.undo());
+      to.current.push(action);
+      notify(redo ? "Change redone" : "Change undone");
     } catch {
+      from.current.push(action);
       notify(
-        "Could not undo this change; it may have expired from Trash",
+        "Could not restore this change; it may have expired from Trash",
         "error",
       );
     } finally {
       undoBusy.current = false;
     }
   };
+  const undoLibrary = () => replayLibrary();
   const decksRef = useRef(decks);
   decksRef.current = decks;
   useEffect(() => {
@@ -228,7 +246,10 @@ export function App() {
         editableTarget(event.target)
       )
         return;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y")
+      ) {
         event.preventDefault();
         void undoLibrary();
       } else if (
@@ -353,7 +374,33 @@ export function App() {
     setEditingDeck(deck);
     go("Create");
   };
+  const applyMetadata = async (changes: Deck[]) => {
+    await updateDeckBatch(changes);
+    const merge = (d: Deck) => {
+      const c = changes.find((c) => c.id === d.id);
+      return c
+        ? { ...d, meta: c.meta, favorite: c.favorite, coverImage: c.coverImage }
+        : d;
+    };
+    setDecks((old) => old.map(merge));
+    setStudyDeck((old) => (old ? merge(old) : old));
+  };
   const setActions: SetActions = {
+    relocateFolder: async (source, parent, name) => {
+      const previous = decksRef.current.filter(
+        (d) =>
+          d.meta?.folder === source || d.meta?.folder?.startsWith(source + "/"),
+      );
+      const changes = relocateFolder(decksRef.current, source, parent, name);
+      await relocateLibraryFolder(source, parent, name || folderName(source));
+      setDecks((old) =>
+        old.map((d) => changes.find((c) => c.id === d.id) || d),
+      );
+      recordUndo(
+        () => applyMetadata(previous),
+        () => applyMetadata(changes),
+      );
+    },
     saveCard: async (deckId, card, starred) => {
       const current = decksRef.current.find((d) => d.id === deckId);
       const previous = current?.cards.find((c) => c.id === card.id);
@@ -377,6 +424,8 @@ export function App() {
                   answerImage: content.answerImage,
                   questionAudio: content.questionAudio,
                   answerAudio: content.answerAudio,
+                  questionVideo: content.questionVideo,
+                  answerVideo: content.answerVideo,
                 }
               : c,
           ),
@@ -390,8 +439,9 @@ export function App() {
         setStudyDeck((old) => (old?.id === deckId ? next : old));
       };
       await apply(card, starred);
-      undoActions.current.push(() =>
-        apply(previous, !!current.meta?.starredCards?.includes(card.id)),
+      recordUndo(
+        () => apply(previous, !!current.meta?.starredCards?.includes(card.id)),
+        () => apply(card, starred),
       );
     },
     remove: async (id) => {
@@ -405,32 +455,10 @@ export function App() {
       const previous = decks.find((d) => d.id === deck.id);
       await updateDeckDetails(deck);
       if (previous)
-        undoActions.current.push(async () => {
-          await updateDeckDetails(previous);
-          setDecks((old) =>
-            old.map((d) =>
-              d.id === previous.id
-                ? {
-                    ...d,
-                    meta: previous.meta,
-                    favorite: previous.favorite,
-                    coverImage: previous.coverImage,
-                  }
-                : d,
-            ),
-          );
-          if (studyDeck?.id === previous.id)
-            setStudyDeck((old) =>
-              old
-                ? {
-                    ...old,
-                    meta: previous.meta,
-                    favorite: previous.favorite,
-                    coverImage: previous.coverImage,
-                  }
-                : old,
-            );
-        });
+        recordUndo(
+          () => applyMetadata([previous]),
+          () => applyMetadata([deck]),
+        );
       const next = decks.map((d) =>
         d.id === deck.id
           ? {
@@ -452,12 +480,10 @@ export function App() {
           decks.map((d) => changes.find((c) => c.id === d.id) || d),
         ),
       );
-      undoActions.current.push(async () => {
-        await updateDeckBatch(previous);
-        setDecks((old) =>
-          old.map((d) => previous.find((p) => p.id === d.id) || d),
-        );
-      });
+      recordUndo(
+        () => applyMetadata(previous),
+        () => applyMetadata(changes),
+      );
       notify("Library updated", "success", () => {
         void undoLibrary();
       });
@@ -482,6 +508,8 @@ export function App() {
           answerImage: c.answerImage,
           questionAudio: c.questionAudio,
           answerAudio: c.answerAudio,
+          questionVideo: c.questionVideo,
+          answerVideo: c.answerVideo,
         })),
       });
       await saveNativeDeck(copy);
@@ -636,7 +664,8 @@ export function App() {
                   decks={decks}
                   start={start}
                   globalQuery={query}
-                  create={() => {
+                  create={(folder) => {
+                    setNewSetFolder(folder || "");
                     setEditingDeck(null);
                     go("Create");
                   }}
@@ -741,6 +770,7 @@ export function App() {
                 <CreatePage
                   key={editingDeck?.id || "new"}
                   initialDeck={editingDeck}
+                  initialFolder={newSetFolder}
                   onCreate={async (d) => {
                     d = normalizeCover({
                       ...d,
@@ -1400,9 +1430,11 @@ function ImportPage({ onImport }: { onImport: (d: Deck) => Promise<void> }) {
 function CreatePage({
   onCreate,
   initialDeck,
+  initialFolder,
 }: {
   onCreate: (d: Deck) => Promise<void>;
   initialDeck: Deck | null;
+  initialFolder?: string;
 }) {
   useImageDragFeedback();
   const reduced = useReducedMotion();
@@ -1427,13 +1459,15 @@ function CreatePage({
     answerImage: null as string | null,
     questionAudio: null as string | null,
     answerAudio: null as string | null,
+    questionVideo: null as string | null,
+    answerVideo: null as string | null,
   });
   const [setId] = useState(initialDeck?.id || draft?.setId || uid());
   const [description, setDescription] = useState(
     initialDeck?.meta?.description || draft?.description || "",
   );
   const [folder, setFolder] = useState(
-    initialDeck?.meta?.folder || draft?.folder || "",
+    initialDeck?.meta?.folder ?? initialFolder ?? draft?.folder ?? "",
   );
   const [tags, setTags] = useState(
     initialDeck?.meta?.tags?.join(", ") || draft?.tags || "",
@@ -1448,6 +1482,8 @@ function CreatePage({
         answerImage: card.answerImage || null,
         questionAudio: card.questionAudio || null,
         answerAudio: card.answerAudio || null,
+        questionVideo: card.questionVideo || null,
+        answerVideo: card.answerVideo || null,
         starred: initialDeck.meta?.starredCards?.includes(card.id) || false,
       }))
     : Array.isArray(draft?.cards)
@@ -1461,6 +1497,8 @@ function CreatePage({
             answerImage?: string | null;
             questionAudio?: string | null;
             answerAudio?: string | null;
+            questionVideo?: string | null;
+            answerVideo?: string | null;
             starred?: boolean;
           }) => ({
             draftId: card.draftId || uid(),
@@ -1471,6 +1509,8 @@ function CreatePage({
             answerImage: card.answerImage || null,
             questionAudio: card.questionAudio || null,
             answerAudio: card.answerAudio || null,
+            questionVideo: card.questionVideo || null,
+            answerVideo: card.answerVideo || null,
             starred: !!card.starred,
           }),
         )
@@ -1484,19 +1524,22 @@ function CreatePage({
         draft?.coverImage ||
         freshCover(setId, load()[0]),
     ),
-    [cards, setCards, undoCards, canUndoCards] = useUndoState<
-      {
-        draftId: string;
-        cardId?: string;
-        question: string;
-        answer: string;
-        questionImage?: string | null;
-        answerImage?: string | null;
-        questionAudio?: string | null;
-        answerAudio?: string | null;
-        starred?: boolean;
-      }[]
-    >(initialCards.length ? initialCards : [blankDraftCard()]),
+    [cards, setCards, undoCards, canUndoCards, redoCards, canRedoCards] =
+      useUndoState<
+        {
+          draftId: string;
+          cardId?: string;
+          question: string;
+          answer: string;
+          questionImage?: string | null;
+          answerImage?: string | null;
+          questionAudio?: string | null;
+          answerAudio?: string | null;
+          questionVideo?: string | null;
+          answerVideo?: string | null;
+          starred?: boolean;
+        }[]
+      >(initialCards.length ? initialCards : [blankDraftCard()]),
     [saved, setSaved] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -1565,6 +1608,8 @@ function CreatePage({
           answerImage: c.answerImage || null,
           questionAudio: c.questionAudio || null,
           answerAudio: c.answerAudio || null,
+          questionVideo: c.questionVideo || null,
+          answerVideo: c.answerVideo || null,
         })),
       };
       deck.meta.starredCards = complete.flatMap((card, index) =>
@@ -1597,7 +1642,10 @@ function CreatePage({
         ) {
           event.preventDefault();
           event.stopPropagation();
-          if (!busy && !removingCards.length) undoCards();
+          if (!busy && !removingCards.length) {
+            if (event.shiftKey || event.key.toLowerCase() === "y") redoCards();
+            else undoCards();
+          }
         } else if (event.key.toLowerCase() === "s") {
           event.preventDefault();
           event.stopPropagation();
@@ -1962,6 +2010,28 @@ function CreatePage({
                         />
                       </label>
                       <InsertMedia>
+                        <VideoField
+                          label={side + " video"}
+                          value={
+                            side === "question"
+                              ? c.questionVideo
+                              : c.answerVideo
+                          }
+                          onChange={(value) =>
+                            setCards((old) =>
+                              old.map((card, j) =>
+                                j === i
+                                  ? {
+                                      ...card,
+                                      [side === "question"
+                                        ? "questionVideo"
+                                        : "answerVideo"]: value,
+                                    }
+                                  : card,
+                              ),
+                            )
+                          }
+                        />
                         <AudioField
                           label={side + " audio"}
                           value={

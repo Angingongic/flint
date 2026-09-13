@@ -1,4 +1,4 @@
-import { Card } from "./lib";
+import { Card, isValidCardDraft } from "./lib";
 import { shuffle, sides, grade } from "./learn-engine";
 export type TestKind = "choice" | "written" | "boolean" | "matching";
 export type TestQuestion = {
@@ -7,18 +7,22 @@ export type TestQuestion = {
   prompt: string;
   promptImage?: string | null;
   promptAudio?: string | null;
+  promptVideo?: string | null;
   answer: string;
   answerImage?: string | null;
   answerAudio?: string | null;
+  answerVideo?: string | null;
   choices: {
     id: string;
     text: string;
     image?: string | null;
     audio?: string | null;
+    video?: string | null;
   }[];
   claim?: string;
   claimImage?: string | null;
   claimAudio?: string | null;
+  claimVideo?: string | null;
   truth?: boolean;
   /** Matching is one question containing independently scored rows. */
   matchRows?: TestQuestion[];
@@ -34,6 +38,8 @@ export const cardKey = (card: Card) =>
     card.answerImage || "",
     card.questionAudio || "",
     card.answerAudio || "",
+    card.questionVideo || "",
+    card.answerVideo || "",
   ]);
 export function matchingGroupSize(
   remaining: number,
@@ -62,6 +68,7 @@ export function makeTest(
   const seen = new Set<string>(),
     ids = new Set<string>();
   const eligible = cards.filter((card) => {
+    if (!isValidCardDraft(card)) return false;
     const key = cardKey(card);
     if (seen.has(key) || ids.has(card.id)) return false;
     seen.add(key);
@@ -88,6 +95,7 @@ export function makeTest(
         text: s.answer,
         image: s.answerImage,
         audio: s.answerAudio,
+        video: s.answerVideo,
       };
     });
     const claimed =
@@ -100,13 +108,16 @@ export function makeTest(
       prompt: side.prompt,
       promptImage: side.image,
       promptAudio: side.audio,
+      promptVideo: side.video,
       answer: side.answer,
       answerImage: side.answerImage,
       answerAudio: side.answerAudio,
+      answerVideo: side.answerVideo,
       choices: options,
       claim: claimed.text,
       claimImage: claimed.image,
       claimAudio: claimed.audio,
+      claimVideo: claimed.video,
       truth: claimed.id === card.id,
     };
   };
@@ -135,11 +146,13 @@ export function makeTest(
           textKey(side.prompt),
           side.image || "",
           side.audio || "",
+          side.video || "",
         ]),
         a = JSON.stringify([
           textKey(side.answer),
           side.answerImage || "",
           side.answerAudio || "",
+          side.answerVideo || "",
         ]);
       if (prompts.has(p) || answers.has(a)) {
         deferred.push(card);
@@ -162,6 +175,7 @@ export function makeTest(
       text: q.answer,
       image: q.answerImage,
       audio: q.answerAudio,
+      video: q.answerVideo,
     }));
     rows.forEach((row) => (row.choices = choices));
     boards--;

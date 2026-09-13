@@ -43,7 +43,7 @@ fn prune_with_target(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut images = HashSet::<String>::new();
     for id in &ids {
-        let mut st=tx.prepare("SELECT cover_image FROM decks WHERE id=?1 UNION SELECT question_image FROM cards WHERE deck_id=?1 UNION SELECT answer_image FROM cards WHERE deck_id=?1 UNION SELECT question_audio FROM cards WHERE deck_id=?1 UNION SELECT answer_audio FROM cards WHERE deck_id=?1 UNION SELECT name FROM media_retired WHERE deck_id=?1").map_err(|e|e.to_string())?;
+        let mut st=tx.prepare("SELECT cover_image FROM decks WHERE id=?1 UNION SELECT question_image FROM cards WHERE deck_id=?1 UNION SELECT answer_image FROM cards WHERE deck_id=?1 UNION SELECT question_audio FROM cards WHERE deck_id=?1 UNION SELECT answer_audio FROM cards WHERE deck_id=?1 UNION SELECT question_video FROM cards WHERE deck_id=?1 UNION SELECT answer_video FROM cards WHERE deck_id=?1 UNION SELECT name FROM media_retired WHERE deck_id=?1").map_err(|e|e.to_string())?;
         for name in st
             .query_map([id], |r| r.get::<_, Option<String>>(0))
             .map_err(|e| e.to_string())?
@@ -90,7 +90,7 @@ fn prune_with_target(
                 .map_err(|e| e.to_string())?;
             continue;
         }
-        let used:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM decks WHERE cover_image=?1 UNION ALL SELECT 1 FROM cards WHERE question_image=?1 OR answer_image=?1 OR question_audio=?1 OR answer_audio=?1)",[&name],|r|r.get(0)).map_err(|e|e.to_string())?;
+        let used:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM decks WHERE cover_image=?1 UNION ALL SELECT 1 FROM cards WHERE question_image=?1 OR answer_image=?1 OR question_audio=?1 OR answer_audio=?1 OR question_video=?1 OR answer_video=?1)",[&name],|r|r.get(0)).map_err(|e|e.to_string())?;
         if !used {
             match fs::remove_file(media.join(&name)) {
                 Ok(()) => {}

@@ -1,3 +1,4 @@
+import { VideoPlayer } from "./Video";
 import { SingleCardEditor } from "./SingleCardEditor";
 import { StudyScope } from "./StudyScope";
 import { useEffect, useRef, useState } from "react";
@@ -43,11 +44,15 @@ export function StudyImage({
   name,
   alt,
   audio,
+  video,
+  autoplay = false,
   active = true,
 }: {
   name?: string | null;
   alt: string;
   audio?: string | null;
+  video?: string | null;
+  autoplay?: boolean;
   active?: boolean;
 }) {
   const [src, setSrc] = useState(""),
@@ -85,8 +90,15 @@ export function StudyImage({
           }}
         />
       )}
+      <VideoPlayer
+        name={video}
+        active={active}
+        autoplay={autoplay}
+        label={alt + " video"}
+      />
       <AudioPlayer
         name={audio}
+        autoplay={autoplay && !video}
         label={alt.replace("visual", "audio") || "Audio"}
         active={active}
       />
@@ -149,6 +161,14 @@ export function SetOverview({
           <div>
             <p className="eyebrow">YOUR STUDY SET</p>
             <h1>{deck.title}</h1>
+            {deck.meta?.sharedFlint && (
+              <small
+                className="flint-source"
+                title="Imported from a shared Flint set"
+              >
+                .flint
+              </small>
+            )}
             <p>
               {deck.subject || "Personal set"} · {deck.cards.length} cards
             </p>
@@ -264,12 +284,14 @@ export function SetOverview({
               <StudyImage
                 name={card.questionImage}
                 audio={card.questionAudio}
+                video={card.questionVideo}
                 alt="Question"
               />
               <p>{card.answer}</p>
               <StudyImage
                 name={card.answerImage}
                 audio={card.answerAudio}
+                video={card.answerVideo}
                 alt="Answer"
               />
             </section>
@@ -455,7 +477,9 @@ function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
               <StudyImage
                 name={side.image}
                 audio={side.audio}
+                video={side.video}
                 active={!flipped}
+                autoplay
                 alt="Front visual"
               />
               <h1>{side.prompt}</h1>
@@ -469,7 +493,9 @@ function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
               <StudyImage
                 name={side.answerImage}
                 audio={side.answerAudio}
+                video={side.answerVideo}
                 active={flipped}
+                autoplay
                 alt="Back visual"
               />
               <h1>{side.answer}</h1>
@@ -698,6 +724,12 @@ function WaveLearnSession({
   const signature = question
     ? `${question.cardId}-${question.kind}-${state?.rounds}-${question.reverse}`
     : "";
+  useEffect(
+    () => () => {
+      window.dispatchEvent(new CustomEvent("flint-audio-play"));
+    },
+    [signature],
+  );
   if (card && question && signature !== choiceKey.current) {
     const distractors = shuffle(
       deck.cards.filter(
@@ -705,7 +737,8 @@ function WaveLearnSession({
           c.id !== card.id &&
           (sides(c, question.reverse).answer.trim() ||
             sides(c, question.reverse).answerImage ||
-            sides(c, question.reverse).answerAudio),
+            sides(c, question.reverse).answerAudio ||
+            sides(c, question.reverse).answerVideo),
       ),
     ).slice(0, 3);
     choices.current = shuffle([card.id, ...distractors.map((c) => c.id)]);
@@ -735,6 +768,7 @@ function WaveLearnSession({
       !value.trim()
     )
       return;
+    window.dispatchEvent(new CustomEvent("flint-audio-play"));
     lock.current = true;
     const result = didntKnow
       ? "DIDNT_KNOW"
@@ -1024,7 +1058,11 @@ function WaveLearnSession({
                   <h1>{side.prompt}</h1>
                   <StudyImage
                     name={side.image}
+                    key={signature}
                     audio={side.audio}
+                    video={side.video}
+                    autoplay
+                    active={!response && !saving}
                     alt="Question visual"
                   />
                   {question.kind === "choice" ? (
@@ -1050,14 +1088,16 @@ function WaveLearnSession({
                               onClick={() => answer(choice.answer, id)}
                               aria-label={
                                 choice.answer ||
-                                `Choose ${choice.answerAudio ? "audio" : "image"} answer ${choices.current.indexOf(id) + 1}`
+                                `Choose ${choice.answerVideo ? "video" : choice.answerAudio ? "audio" : "image"} answer ${choices.current.indexOf(id) + 1}`
                               }
                             >
                               {choice.answer.trim() ||
                                 (!choice.answerImage
-                                  ? choice.answerAudio
-                                    ? "Select this audio answer"
-                                    : "Answer unavailable"
+                                  ? choice.answerVideo
+                                    ? "Select this video answer"
+                                    : choice.answerAudio
+                                      ? "Select this audio answer"
+                                      : "Answer unavailable"
                                   : "")}
                               {response && id === card.id && (
                                 <span className="choice-outcome">
@@ -1075,6 +1115,10 @@ function WaveLearnSession({
                                 alt="Choice visual"
                               />
                             </button>
+                            <VideoPlayer
+                              name={choice.answerVideo}
+                              label="Choice video"
+                            />
                             <AudioPlayer
                               name={choice.answerAudio}
                               label={
@@ -1119,6 +1163,7 @@ function WaveLearnSession({
                         <StudyImage
                           name={side.answerImage}
                           audio={side.answerAudio}
+                          video={side.answerVideo}
                           alt="Answer visual"
                         />
                         <div className="study-options">
@@ -1188,6 +1233,7 @@ function WaveLearnSession({
                           <StudyImage
                             name={side.answerImage}
                             audio={side.answerAudio}
+                            video={side.answerVideo}
                             alt="Correct answer visual"
                           />
                           <p>
@@ -1205,6 +1251,7 @@ function WaveLearnSession({
                             <StudyImage
                               name={side.answerImage}
                               audio={side.answerAudio}
+                              video={side.answerVideo}
                               alt="Correct answer visual"
                             />
                           </div>
@@ -1252,8 +1299,18 @@ export function WaveLearn(props: { deck: Deck; done: () => void }) {
         ...props.deck,
         cards: props.deck.cards.filter(
           (c) =>
-            !!(c.question.trim() || c.questionImage || c.questionAudio) &&
-            !!(c.answer.trim() || c.answerImage || c.answerAudio),
+            !!(
+              c.question.trim() ||
+              c.questionImage ||
+              c.questionAudio ||
+              c.questionVideo
+            ) &&
+            !!(
+              c.answer.trim() ||
+              c.answerImage ||
+              c.answerAudio ||
+              c.answerVideo
+            ),
         ),
       }}
     >

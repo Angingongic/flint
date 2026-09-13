@@ -26,6 +26,7 @@ import { LibraryView } from "./LibraryView";
 import { newCard, type Deck } from "./lib";
 vi.mock("./native", () => ({
   exportDeckText: vi.fn(),
+  libraryStorageBytes: vi.fn(async () => 1024),
   mediaUrl: vi.fn(async (name: string) => name),
 }));
 afterEach(cleanup);

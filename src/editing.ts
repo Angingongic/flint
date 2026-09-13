@@ -17,6 +17,8 @@ export function duplicateKind(
     | "answerImage"
     | "questionAudio"
     | "answerAudio"
+    | "questionVideo"
+    | "answerVideo"
   >,
   b: Pick<
     Card,
@@ -26,13 +28,17 @@ export function duplicateKind(
     | "answerImage"
     | "questionAudio"
     | "answerAudio"
+    | "questionVideo"
+    | "answerVideo"
   >,
 ): "exact" | "near" | null {
   if (
     (a.questionImage || "") !== (b.questionImage || "") ||
     (a.answerImage || "") !== (b.answerImage || "") ||
     (a.questionAudio || "") !== (b.questionAudio || "") ||
-    (a.answerAudio || "") !== (b.answerAudio || "")
+    (a.answerAudio || "") !== (b.answerAudio || "") ||
+    (a.questionVideo || "") !== (b.questionVideo || "") ||
+    (a.answerVideo || "") !== (b.answerVideo || "")
   )
     return null;
   const aq = duplicateText(a.question),
@@ -68,6 +74,8 @@ export function resolveDuplicates<
     answerImage?: string | null;
     questionAudio?: string | null;
     answerAudio?: string | null;
+    questionVideo?: string | null;
+    answerVideo?: string | null;
   },
 >(cards: T[], choices: DuplicateChoice[]): T[] {
   const output: T[] = [];
@@ -85,6 +93,8 @@ export function resolveDuplicates<
         answerImage: card.answerImage,
         questionAudio: card.questionAudio,
         answerAudio: card.answerAudio,
+        questionVideo: card.questionVideo,
+        answerVideo: card.answerVideo,
       };
   }
   return output;
@@ -134,13 +144,15 @@ export function moveFolder(
 export function useUndoState<T>(initial: T) {
   const [state, rawSet] = useState(initial),
     current = useRef(state),
-    history = useRef<T[]>([]);
+    history = useRef<T[]>([]),
+    future = useRef<T[]>([]);
   const set = (update: T | ((old: T) => T)) => {
     const next =
       typeof update === "function"
         ? (update as (old: T) => T)(current.current)
         : update;
     if (next === current.current) return;
+    future.current = [];
     history.current.push(structuredClone(current.current));
     if (history.current.length > 100) history.current.shift();
     current.current = next;
@@ -149,10 +161,25 @@ export function useUndoState<T>(initial: T) {
   const undo = () => {
     if (!history.current.length) return;
     const prior = history.current.pop()!;
+    future.current.push(structuredClone(current.current));
     current.current = prior;
     rawSet(prior);
   };
-  return [state, set, undo, history.current.length > 0] as const;
+  const redo = () => {
+    if (!future.current.length) return;
+    history.current.push(structuredClone(current.current));
+    const next = future.current.pop()!;
+    current.current = next;
+    rawSet(next);
+  };
+  return [
+    state,
+    set,
+    undo,
+    history.current.length > 0,
+    redo,
+    future.current.length > 0,
+  ] as const;
 }
 export function swapSides<
   T extends {
@@ -162,6 +189,8 @@ export function swapSides<
     answerImage?: string | null;
     questionAudio?: string | null;
     answerAudio?: string | null;
+    questionVideo?: string | null;
+    answerVideo?: string | null;
   },
 >(card: T): T {
   return {
@@ -172,5 +201,7 @@ export function swapSides<
     answerImage: card.questionImage,
     questionAudio: card.answerAudio,
     answerAudio: card.questionAudio,
+    questionVideo: card.answerVideo,
+    answerVideo: card.questionVideo,
   };
 }

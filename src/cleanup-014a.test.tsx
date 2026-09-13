@@ -160,16 +160,14 @@ describe("0.1.4a completion", () => {
     expect(screen.queryByRole("button", { name: "Open Root" })).toBeNull();
     mouseDrag(
       document.querySelector(".deck-drop-wrap")!,
-      screen.getByRole("button", { name: "Library / Languages" }),
+      screen.getByRole("button", { name: "Library" }),
     );
     await waitFor(() =>
       expect(
         screen.queryByRole("button", { name: "Open Audio study" }),
       ).toBeNull(),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Library / Languages" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Library" }));
     expect(
       screen.getByRole("button", { name: "Open Audio study" }),
     ).toBeTruthy();
@@ -284,15 +282,7 @@ describe("0.1.4a completion", () => {
       ],
     };
     render(<Flashcards deck={mediaDeck} done={() => {}} />);
-    await screen.findByRole("button", { name: "Play Front audio" });
-    await waitFor(() =>
-      expect(
-        screen
-          .getByRole("button", { name: "Play Front audio" })
-          .hasAttribute("disabled"),
-      ).toBe(false),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Play Front audio" }));
+    // The visible front autoplays; navigation must stop it immediately.
     await screen.findByRole("button", { name: "Pause Front audio" });
     fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();

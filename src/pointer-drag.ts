@@ -1,3 +1,4 @@
+import { reorderMotion } from "./reorder-motion";
 import {
   useEffect,
   useRef,
@@ -24,7 +25,7 @@ export function usePointerDrag(
     if (
       e.button !== 0 ||
       (e.target as Element).closest(
-        ".deck-menu,.audio-player,input,select,textarea",
+        ".deck-menu,.audio-player,.video-player,input,select,textarea",
       ) ||
       (e.pointerType === "touch" &&
         touchHandle &&
@@ -36,6 +37,16 @@ export function usePointerDrag(
       start = { x: e.clientX, y: e.clientY },
       rect = element.getBoundingClientRect();
     let ghost: HTMLElement | null = null;
+    let selectionStyle = "";
+    const reduced = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        stop();
+      }
+    };
     const move = (event: PointerEvent) => {
       if (event.pointerId !== e.pointerId) return;
       if (
@@ -59,6 +70,11 @@ export function usePointerDrag(
         });
         ghost.classList.add("pointer-drag-ghost");
         document.body.append(ghost);
+        selectionStyle = document.body.style.userSelect;
+        document.body.style.userSelect = "none";
+        element.classList.add("pointer-drag-source");
+        if (!reduced)
+          ghost.style.transform = `translateY(-${reorderMotion.lift}px) scale(1.015)`;
         setActive(id);
         suppress.current = true;
         window.getSelection()?.removeAllRanges();
@@ -72,13 +88,50 @@ export function usePointerDrag(
       setTimeout(() => {
         suppress.current = false;
       }, 0);
-      ghost?.remove();
+      const settling = ghost;
+      if (settling) {
+        document.body.style.userSelect = selectionStyle;
+        element.classList.remove("pointer-drag-source");
+        requestAnimationFrame(() => {
+          const destination = Array.from(
+            document.querySelectorAll<HTMLElement>(
+              "[data-answer-id],[data-library-id]",
+            ),
+          ).find(
+            (el) =>
+              !el.closest(".pointer-drag-ghost") &&
+              (el.dataset.answerId === id || el.dataset.libraryId === id),
+          );
+          const target = (destination || element).getBoundingClientRect(),
+            start = settling.getBoundingClientRect();
+          if (reduced || !target.width || !settling.animate) {
+            settling.remove();
+            return;
+          }
+          const animation = settling.animate(
+            [
+              { transform: settling.style.transform },
+              {
+                transform: `translate(${target.left - start.left}px,${target.top - start.top}px) scale(1)`,
+              },
+            ],
+            {
+              duration: reorderMotion.settle,
+              easing: reorderMotion.easing,
+              fill: "forwards",
+            },
+          );
+          animation.onfinish = () => settling.remove();
+          animation.oncancel = () => settling.remove();
+        });
+      }
       ghost = null;
       handlers.current.onEnd?.();
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
       window.removeEventListener("blur", stop);
+      window.removeEventListener("keydown", escape);
       cancel.current = () => {};
     };
     const finish = (event: PointerEvent) => {
@@ -96,6 +149,7 @@ export function usePointerDrag(
     };
     cancel.current = stop;
     window.addEventListener("blur", stop);
+    window.addEventListener("keydown", escape);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);

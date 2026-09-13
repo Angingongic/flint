@@ -1,3 +1,14 @@
+import { useReorderMotion } from "./reorder-motion";
+import {
+  allFolderPaths,
+  folderContains,
+  folderName,
+  folderParent,
+  folderPath,
+  relocatedPath,
+  relocateFolder,
+} from "./folders";
+import { libraryStorageBytes } from "./native";
 import { ItemMenu } from "./ItemMenu";
 import { usePointerDrag } from "./pointer-drag";
 import {
@@ -34,6 +45,11 @@ import { Modal } from "./ui";
 import { Progress, notify } from "./motion";
 import { moveFolder } from "./editing";
 export type SetActions = {
+  relocateFolder?: (
+    source: string,
+    parent: string,
+    name?: string,
+  ) => Promise<void>;
   saveCard?: (
     deckId: string,
     card: Deck["cards"][number],
@@ -315,6 +331,14 @@ export function RichDeckCard({
             label={deck.title + " mastery"}
           />
         )}
+        {deck.meta?.sharedFlint && (
+          <small
+            className="flint-source"
+            title="Imported from a shared Flint set"
+          >
+            .flint
+          </small>
+        )}
         <div className="rich-deck-bottom">
           {actions && (
             <button
@@ -360,10 +384,32 @@ export function LibraryView({
   decks: Deck[];
   start: (deck: Deck) => void;
   actions: SetActions;
-  create: () => void;
+  create: (folder?: string) => void;
   globalQuery: string;
 }) {
+  const [storage, setStorage] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    const timer = setTimeout(() => {
+      void libraryStorageBytes(decks)
+        .then((n) => {
+          if (live) setStorage(n);
+        })
+        .catch(() => {});
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [decks]);
   const [layout, setLayout] = useState(loadLibraryPreferences);
+  const grid = useRef<HTMLDivElement>(null),
+    dragBase = useRef<string[]>([]),
+    dragRects = useRef<
+      { id: string; left: number; top: number; width: number; height: number }[]
+    >([]);
+  const [previewOrder, setPreviewOrder] = useState<string[] | null>(null);
+
   const persistLayout = (next: LibraryPreferences) => {
     try {
       saveLibraryPreferences(next);
@@ -479,11 +525,11 @@ export function LibraryView({
     )
     .filter(matches);
   const folders =
-    folder || filter === "Trash"
+    filter === "Trash"
       ? []
-      : ([
-          ...new Set(candidates.map((d) => d.meta?.folder).filter(Boolean)),
-        ] as string[]);
+      : allFolderPaths(candidates).filter(
+          (path) => folderParent(path) === folder,
+        );
   const shown = orderedSets(candidates, layout.order)
     .filter(
       (d) =>
@@ -523,12 +569,17 @@ export function LibraryView({
   };
   const editFolder = (kind: "rename" | "delete", old: string) => {
     setError("");
-    setName(old);
+    setName(folderName(old));
     setProposal({
       kind,
       old,
       ids: decks
-        .filter((d) => !d.meta?.deletedAt && d.meta?.folder === old)
+        .filter(
+          (d) =>
+            !d.meta?.deletedAt &&
+            !!d.meta?.folder &&
+            folderContains(old, d.meta.folder),
+        )
         .map((d) => d.id),
     });
   };
@@ -547,19 +598,32 @@ export function LibraryView({
     ...folders.map((f) => "folder:" + f),
     ...shown.map((d) => d.id),
   ];
+  useReorderMotion(
+    grid,
+    "[data-library-id]",
+    folder +
+      "|" +
+      rootIds.join("|") +
+      "|" +
+      (previewOrder || layout.order).join("|"),
+  );
   const rank = (id: string) =>
     layout.order.includes(id)
       ? layout.order.indexOf(id)
       : layout.order.length + rootIds.indexOf(id);
   const itemOrder = (id: string, pinned?: boolean) =>
-    (pinned ? -100000 : 0) + (sort === "manual" ? rank(id) : 0);
+    previewOrder?.includes(id)
+      ? previewOrder.indexOf(id)
+      : (pinned ? -100000 : 0) + (sort === "manual" ? rank(id) : 0);
   const reorder = (
     target: string,
     position: "before" | "after" | "inside",
     source = dragged,
   ) => {
     if (!source) return;
-    const ids = [...rootIds].sort((a, b) => rank(a) - rank(b));
+    const ids = dragBase.current.length
+      ? dragBase.current
+      : [...rootIds].sort((a, b) => rank(a) - rank(b));
     const next = reorderItems(ids, source, target, position === "after");
     persistLayout({
       ...layout,
@@ -570,11 +634,39 @@ export function LibraryView({
     setDragged(null);
     setOver("");
   };
+  const moveTree = async (source: string, parent: string, name?: string) => {
+    const changes = relocateFolder(decks, source, parent, name);
+    const target = relocatedPath(source, parent, name);
+    if (actions.relocateFolder)
+      await actions.relocateFolder(source, parent, name);
+    else await batch(changes);
+    const rename = (path: string) =>
+      folderContains(source, path) ? target + path.slice(source.length) : path;
+    persistLayout({
+      ...layout,
+      folders: Object.fromEntries(
+        Object.entries(layout.folders).map(([key, v]) => [rename(key), v]),
+      ),
+      order: layout.order.map((id) =>
+        id.startsWith("folder:") ? "folder:" + rename(id.slice(7)) : id,
+      ),
+    });
+    if (folderContains(source, folder)) setFolder(rename(folder));
+    notify("Folder moved");
+  };
   const dropInto = async (target: string, source = dragged) => {
     const id = source;
     setDragged(null);
     setOver("");
-    if (!id || id.startsWith("folder:")) return;
+    if (!id) return;
+    if (id.startsWith("folder:")) {
+      try {
+        await moveTree(id.slice(7), target);
+      } catch (e) {
+        notify(String(e), "error");
+      }
+      return;
+    }
     try {
       await batch(
         moveFolder(
@@ -592,8 +684,25 @@ export function LibraryView({
     const el = document
       .elementFromPoint(point.x, point.y)
       ?.closest<HTMLElement>("[data-library-id]");
-    if (!el || el.dataset.libraryId === point.id) return null;
-    const r = el.getBoundingClientRect(),
+    if (!el) return null;
+    const original = dragRects.current.find(
+      (r) =>
+        point.x >= r.left - window.scrollX &&
+        point.x <= r.left + r.width - window.scrollX &&
+        point.y >= r.top - window.scrollY &&
+        point.y <= r.top + r.height - window.scrollY,
+    );
+    const r =
+        original &&
+        !el.dataset.libraryId?.startsWith("ancestor:") &&
+        el.dataset.libraryId !== "root"
+          ? {
+              left: original.left - window.scrollX,
+              top: original.top - window.scrollY,
+              width: original.width,
+              height: original.height,
+            }
+          : el.getBoundingClientRect(),
       x = (point.x - r.left) / r.width,
       y = (point.y - r.top) / r.height;
     const position =
@@ -602,14 +711,57 @@ export function LibraryView({
         : x > 0.82 || y > 0.78
           ? "after"
           : "inside";
+    const id =
+      original && el.closest(".rich-deck-grid")
+        ? original.id
+        : el.dataset.libraryId!;
+    if (id === point.id) return null;
     return {
-      id: el.dataset.libraryId!,
+      id,
       position: position as "before" | "after" | "inside",
     };
   };
   const pointerDrag = usePointerDrag(
     (point) => {
+      if (!dragBase.current.length)
+        dragBase.current = Array.from(
+          grid.current?.querySelectorAll<HTMLElement>("[data-library-id]") ||
+            [],
+        )
+          .sort(
+            (a, b) => a.offsetTop - b.offsetTop || a.offsetLeft - b.offsetLeft,
+          )
+          .map((el) => el.dataset.libraryId!);
+      if (!dragRects.current.length)
+        dragRects.current = Array.from(
+          grid.current?.querySelectorAll<HTMLElement>("[data-library-id]") ||
+            [],
+        ).map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            id: el.dataset.libraryId!,
+            left: r.left + window.scrollX,
+            top: r.top + window.scrollY,
+            width: r.width,
+            height: r.height,
+          };
+        });
       const target = hit(point);
+      if (
+        target &&
+        target.position !== "inside" &&
+        dragBase.current.includes(target.id)
+      ) {
+        const next = reorderItems(
+          dragBase.current,
+          point.id,
+          target.id,
+          target.position === "after",
+        );
+        setPreviewOrder((old) =>
+          old?.join("|") === next.join("|") ? old : next,
+        );
+      } else setPreviewOrder(null);
       setDragged(point.id);
       setOver(target ? target.id.replace(/^folder:/, "") : "");
       setDropPosition(target?.position || "inside");
@@ -617,22 +769,19 @@ export function LibraryView({
     (point) => {
       const target = hit(point);
       if (!target) return;
-      if (target.id === "root") {
-        void dropInto("", point.id);
+      if (target.id === "root" || target.id.startsWith("ancestor:")) {
+        void dropInto(target.id === "root" ? "" : target.id.slice(9), point.id);
         return;
       }
-      if (target.position !== "inside" || point.id.startsWith("folder:")) {
-        reorder(
-          target.id,
-          target.position === "inside" ? "before" : target.position,
-          point.id,
-        );
+      if (target.position !== "inside") {
+        reorder(target.id, target.position, point.id);
         return;
       }
       if (target.id.startsWith("folder:")) {
         void dropInto(target.id.slice(7), point.id);
         return;
       }
+      if (point.id.startsWith("folder:")) return;
       setError("");
       setName("New folder");
       setProposal({ kind: "create", ids: [point.id, target.id] });
@@ -640,6 +789,9 @@ export function LibraryView({
     () => {
       setDragged(null);
       setOver("");
+      setPreviewOrder(null);
+      dragBase.current = [];
+      dragRects.current = [];
     },
   );
   const confirm = async () => {
@@ -659,9 +811,15 @@ export function LibraryView({
             meta: { ...d.meta, deletedAt: new Date().toISOString() },
           })),
         );
-        setFolder("");
+        openFolder(folderParent(proposal.old || folder));
       } else {
-        const next = name.trim();
+        const parent =
+          proposal.kind === "rename" ? folderParent(proposal.old!) : folder;
+        const next = folderPath(
+          [parent, name.trim()].filter(Boolean).join("/"),
+        );
+        if (name.includes("/"))
+          throw Error("Use a single folder name without /.");
         if (!next) throw Error("Enter a folder name");
         if (
           decks.some(
@@ -672,23 +830,9 @@ export function LibraryView({
           )
         )
           throw Error("That folder already exists. Choose another name.");
-        await batch(moveFolder(members, proposal.ids, next));
-        if (proposal.kind === "rename") {
-          const folders = {
-            ...layout.folders,
-            [next]: layout.folders[proposal.old!] || {},
-          };
-          delete folders[proposal.old!];
-          persistLayout({
-            ...layout,
-            folders,
-            order: layout.order.map((id) =>
-              id === "folder:" + proposal.old ? "folder:" + next : id,
-            ),
-          });
-        }
-        if (proposal.kind === "rename" && folder === proposal.old)
-          setFolder(next);
+        if (proposal.kind === "rename")
+          await moveTree(proposal.old!, parent, name.trim());
+        else await batch(moveFolder(members, proposal.ids, next));
       }
       setProposal(null);
     } catch (e) {
@@ -699,6 +843,27 @@ export function LibraryView({
   };
   return (
     <div className="library-view">
+      {dragged && (
+        <p className="library-drag-status" role="status">
+          {over
+            ? (dropPosition === "inside"
+                ? "Move inside / group: "
+                : dropPosition === "before"
+                  ? "Insert before: "
+                  : "Insert after: ") +
+              (over === "root"
+                ? "Library"
+                : over.startsWith("ancestor:")
+                  ? folderName(over.slice(9))
+                  : decks.find((d) => d.id === over)?.title || folderName(over))
+            : "Drag to an edge to reorder, or the center to move inside"}
+        </p>
+      )}
+      {storage !== null && (
+        <small className="library-storage">
+          {formatStorage(storage)} on this device · includes retained media
+        </small>
+      )}
       {proposal && (
         <Modal
           title={
@@ -773,14 +938,18 @@ export function LibraryView({
       <div className="page-title">
         <div>
           <p className="eyebrow">{folder ? "FOLDER" : "YOUR COLLECTION"}</p>
-          <h1>{folder || "Your Library"}</h1>
+          <h1>
+            {folderName(folder) === "Library"
+              ? "Your Library"
+              : folderName(folder)}
+          </h1>
           <p>
             {folder
               ? `Folder · ${shown.length} ${shown.length === 1 ? "set" : "sets"}`
               : "All your sets. A place for every idea."}
           </p>
         </div>
-        <button className="primary" onClick={create}>
+        <button className="primary" onClick={() => create(folder)}>
           <Plus size={17} />
           New set
         </button>
@@ -814,8 +983,36 @@ export function LibraryView({
                 onClick={() => openFolder("")}
               >
                 <ArrowLeft size={18} />
-                Library / {folder}
+                {dragged ? "Move to Library" : "Library"}
               </button>
+              {folder
+                .split("/")
+                .slice(0, -1)
+                .map((part, i) => (
+                  <button
+                    key={i}
+                    className="secondary"
+                    data-library-id={
+                      "ancestor:" +
+                      folder
+                        .split("/")
+                        .slice(0, i + 1)
+                        .join("/")
+                    }
+                    onClick={() =>
+                      openFolder(
+                        folder
+                          .split("/")
+                          .slice(0, i + 1)
+                          .join("/"),
+                      )
+                    }
+                  >
+                    {dragged ? "Move to " : "/ "}
+                    {part}
+                  </button>
+                ))}
+              <span aria-current="page">/ {folderName(folder)}</span>
               <button
                 className="secondary"
                 aria-label={"Rename folder " + folder}
@@ -844,7 +1041,7 @@ export function LibraryView({
                     setFolder("");
                   }}
                 >
-                  {f}
+                  {folderName(f)}
                 </button>
               ))}
             </div>
@@ -857,7 +1054,7 @@ export function LibraryView({
                   persistLayout({ ...layout, sort: e.target.value });
                 }}
               >
-                <option value="manual">Manual order</option>
+                <option value="manual">Custom</option>
                 <option value="studied">Recently studied</option>
                 <option value="created">Recently created</option>
                 <option value="name">Name</option>
@@ -888,7 +1085,10 @@ export function LibraryView({
         {shown.length} sets
         {filter === "Trash" ? " · Up to 7 days, 5 sets maximum" : ""}
       </p>
-      <div className={"rich-deck-grid " + (view === "list" ? "list-view" : "")}>
+      <div
+        ref={grid}
+        className={"rich-deck-grid " + (view === "list" ? "list-view" : "")}
+      >
         {folders
           .sort(
             (a, b) =>
@@ -934,12 +1134,15 @@ export function LibraryView({
                   {layout.folders[f]?.pinned && (
                     <Pin size={13} aria-label="Pinned folder" />
                   )}{" "}
-                  {f}
+                  {folderName(f)}
                 </h3>
                 <p>
                   {
                     decks.filter(
-                      (d) => !d.meta?.deletedAt && d.meta?.folder === f,
+                      (d) =>
+                        !d.meta?.deletedAt &&
+                        !!d.meta?.folder &&
+                        folderContains(f, d.meta.folder),
                     ).length
                   }{" "}
                   sets
@@ -958,6 +1161,30 @@ export function LibraryView({
                     <Pin />
                     {layout.folders[f]?.pinned ? "Unpin" : "Pin"}
                   </button>
+                  {folderParent(f) && (
+                    <>
+                      <button
+                        onClick={() =>
+                          void moveTree(f, folderParent(folderParent(f))).catch(
+                            (e) => notify(String(e), "error"),
+                          )
+                        }
+                      >
+                        Move to {folderName(folderParent(folderParent(f)))}
+                      </button>
+                      {folderParent(folderParent(f)) && (
+                        <button
+                          onClick={() =>
+                            void moveTree(f, "").catch((e) =>
+                              notify(String(e), "error"),
+                            )
+                          }
+                        >
+                          Move to Library
+                        </button>
+                      )}
+                    </>
+                  )}
                   <label className="folder-color">
                     Folder color
                     <select
@@ -1096,5 +1323,19 @@ function openItemMenu(event: React.MouseEvent<HTMLElement>) {
     new CustomEvent("flint-menu", {
       detail: { x: event.clientX, y: event.clientY },
     }),
+  );
+}
+export function formatStorage(bytes: number) {
+  const units = ["B", "KiB", "MiB", "GiB"];
+  const index = Math.min(
+    3,
+    Math.max(0, Math.floor(Math.log(Math.max(1, bytes)) / Math.log(1024))),
+  );
+  return (
+    (bytes / 1024 ** index).toLocaleString(undefined, {
+      maximumFractionDigits: index ? 2 : 0,
+    }) +
+    " " +
+    units[index]
   );
 }

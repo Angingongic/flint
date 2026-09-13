@@ -1,3 +1,4 @@
+import { AudioRecorder } from "./AudioRecorder";
 import { useEffect, useRef, useState } from "react";
 import { Play, Pause, RotateCcw, Volume2, Upload, Trash2 } from "lucide-react";
 import { mediaUrl, saveAudioBytes } from "./native";
@@ -11,11 +12,13 @@ export function AudioPlayer({
   src: provided,
   label = "Audio",
   active = true,
+  autoplay = false,
 }: {
   name?: string | null;
   src?: string;
   label?: string;
   active?: boolean;
+  autoplay?: boolean;
 }) {
   const audio = useRef<HTMLAudioElement>(null),
     identity = useRef({});
@@ -47,6 +50,7 @@ export function AudioPlayer({
     const stop = (e: Event) => {
       if ((e as CustomEvent).detail !== identity.current) {
         element?.pause();
+        if (element) element.currentTime = 0;
         setPlaying(false);
       }
     };
@@ -54,6 +58,7 @@ export function AudioPlayer({
     return () => {
       window.removeEventListener(STOP_EVENT, stop);
       element?.pause();
+      if (element) element.currentTime = 0;
     };
   }, [src]);
   useEffect(() => {
@@ -64,6 +69,21 @@ export function AudioPlayer({
       setPlaying(false);
     }
   }, [active]);
+  useEffect(() => {
+    const el = audio.current;
+    if (active && autoplay && src) void el?.play().catch(() => {});
+    const observer =
+      el && typeof IntersectionObserver !== "undefined"
+        ? new IntersectionObserver((entries) => {
+            if (!entries[0].isIntersecting) {
+              el.pause();
+              el.currentTime = 0;
+            }
+          })
+        : null;
+    if (el?.parentElement) observer?.observe(el.parentElement);
+    return () => observer?.disconnect();
+  }, [active, autoplay, src]);
   if (!name && !provided) return null;
   const play = async () => {
     if (!active || !audio.current) return;
@@ -91,7 +111,17 @@ export function AudioPlayer({
         preload="metadata"
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-        onPlay={() => setPlaying(true)}
+        onPlay={(e) => {
+          if (!active) {
+            e.currentTarget.pause();
+            e.currentTarget.currentTime = 0;
+            return;
+          }
+          window.dispatchEvent(
+            new CustomEvent(STOP_EVENT, { detail: identity.current }),
+          );
+          setPlaying(true);
+        }}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
         onError={() =>
@@ -170,6 +200,14 @@ export function AudioField({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [filename, setFilename] = useState("");
+  const root = useRef<HTMLDivElement>(null),
+    [recording, setRecording] = useState(false);
+  useEffect(() => {
+    const el = root.current!;
+    const open = () => setRecording(true);
+    el.addEventListener("flint-record", open);
+    return () => el.removeEventListener("flint-record", open);
+  }, []);
   const filenames = useRef<Record<string, string>>({});
   useEffect(() => setFilename(filenames.current[value || ""] || ""), [value]);
   const attach = async (file?: File) => {
@@ -191,6 +229,7 @@ export function AudioField({
   };
   return (
     <div
+      ref={root}
       className="audio-field"
       aria-label={label + " attachment"}
       onDragOver={(e) => e.preventDefault()}
@@ -200,12 +239,15 @@ export function AudioField({
         void attach(e.dataTransfer.files[0]);
       }}
     >
+      {recording && (
+        <AudioRecorder close={() => setRecording(false)} onUse={onChange} />
+      )}
       <input
         ref={input}
         hidden
         aria-label={"Upload " + label}
         type="file"
-        accept=".mp3,.m4a,.wav,.ogg,audio/mpeg,audio/mp4,audio/wav,audio/ogg"
+        accept=".mp3,.m4a,.wav,.ogg,.webm,audio/mpeg,audio/mp4,audio/wav,audio/ogg,audio/webm"
         onChange={(e) => {
           void attach(e.target.files?.[0]);
           e.target.value = "";

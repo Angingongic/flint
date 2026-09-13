@@ -1,3 +1,4 @@
+import { VideoField } from "./Video";
 import { useState } from "react";
 import { Modal } from "./ui";
 import { isValidCardDraft, type Card } from "./lib";
@@ -21,7 +22,10 @@ export function SingleCardEditor({
   close: () => void;
 }) {
   useImageDragFeedback();
-  const [draft, setDraft, undo, canUndo] = useUndoState({ ...card, starred });
+  const [draft, setDraft, undo, canUndo, redo, canRedo] = useUndoState({
+    ...card,
+    starred,
+  });
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   return (
@@ -33,15 +37,22 @@ export function SingleCardEditor({
     >
       <div
         onKeyDown={(e) => {
-          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+          if (
+            (e.ctrlKey || e.metaKey) &&
+            (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y")
+          ) {
             e.preventDefault();
             e.stopPropagation();
-            undo();
+            if (e.shiftKey || e.key.toLowerCase() === "y") redo();
+            else undo();
           }
         }}
       >
         <button disabled={!canUndo || busy} onClick={undo}>
           Undo card edit
+        </button>
+        <button disabled={!canRedo || busy} onClick={redo}>
+          Redo card edit
         </button>
         <button
           aria-label="Star editor card"
@@ -83,6 +94,21 @@ export function SingleCardEditor({
                       setDraft((old) => ({
                         ...old,
                         [side === "question" ? "questionImage" : "answerImage"]:
+                          value,
+                      }))
+                    }
+                  />
+                  <VideoField
+                    label={side + " video"}
+                    value={
+                      draft[
+                        side === "question" ? "questionVideo" : "answerVideo"
+                      ]
+                    }
+                    onChange={(value) =>
+                      setDraft((old) => ({
+                        ...old,
+                        [side === "question" ? "questionVideo" : "answerVideo"]:
                           value,
                       }))
                     }

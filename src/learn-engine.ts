@@ -158,16 +158,20 @@ export function sides(card: Card, reverse: boolean) {
         prompt: card.answer,
         image: card.answerImage,
         audio: card.answerAudio,
+        video: card.answerVideo,
         answer: card.question,
         answerImage: card.questionImage,
         answerAudio: card.questionAudio,
+        answerVideo: card.questionVideo,
       }
     : {
         prompt: card.question,
         image: card.questionImage,
         audio: card.questionAudio,
+        video: card.questionVideo,
         answer: card.answer,
         answerImage: card.answerImage,
         answerAudio: card.answerAudio,
+        answerVideo: card.answerVideo,
       };
 }

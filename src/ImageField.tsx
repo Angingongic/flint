@@ -48,10 +48,10 @@ export function ImageField({
   const process = async (file: File) => {
     setError("");
     if (
-      !/^image\/(png|jpeg|webp)$/.test(file.type) ||
+      !/^image\/(png|jpeg|webp|gif)$/.test(file.type) ||
       file.size > 25 * 1024 * 1024
     ) {
-      setError("Choose a PNG, JPEG or WebP image under 25 MB.");
+      setError("Choose a PNG, JPEG, WebP or GIF image under 25 MB.");
       return;
     }
     setBusy(true);
@@ -90,7 +90,7 @@ export function ImageField({
       className="attachment"
       tabIndex={0}
       aria-label={label + " attachment"}
-      title="Choose, drop, or paste PNG, JPEG or WebP"
+      title="Choose, drop, or paste PNG, JPEG, WebP or GIF"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
@@ -103,19 +103,21 @@ export function ImageField({
         }
       }}
     >
-      {crop && value && (
-        <ImageCrop
-          name={value}
-          onClose={() => setCrop(false)}
-          onApply={async (file) => {
-            if (!(await process(file))) throw Error("Image save failed");
-          }}
-        />
-      )}
+      {crop &&
+        value &&
+        !(/\.gif$/i.test(value) || value.startsWith("data:image/gif")) && (
+          <ImageCrop
+            name={value}
+            onClose={() => setCrop(false)}
+            onApply={async (file) => {
+              if (!(await process(file))) throw Error("Image save failed");
+            }}
+          />
+        )}
       <input
         ref={input}
         type="file"
-        accept="image/png,image/jpeg,image/webp"
+        accept="image/png,image/jpeg,image/webp,image/gif"
         style={{ display: "none" }}
         onChange={(e) => {
           if (e.target.files?.[0]) void process(e.target.files[0]);
@@ -171,7 +173,12 @@ export function ImageField({
             </button>
             <button
               className="secondary"
-              disabled={busy}
+              disabled={
+                busy ||
+                (!!value &&
+                  (/\.gif$/i.test(value) || value.startsWith("data:image/gif")))
+              }
+              title="Cropping is available for static images only"
               onClick={() => setCrop(true)}
             >
               Crop / reposition
@@ -207,7 +214,7 @@ export function ImageField({
 export const imageDrag = (dt: DataTransfer | null) =>
   !!dt &&
   Array.from(dt.items || []).some(
-    (i) => i.kind === "file" && /^image\/(png|jpeg|webp)$/.test(i.type),
+    (i) => i.kind === "file" && /^image\/(png|jpeg|webp|gif)$/.test(i.type),
   );
 export function ImageDestination({
   children,
@@ -228,7 +235,7 @@ export function ImageDestination({
       }}
       onDropCapture={(e) => {
         const file = Array.from(e.dataTransfer.files).find((f) =>
-          /^image\/(png|jpeg|webp)$/.test(f.type),
+          /^image\/(png|jpeg|webp|gif)$/.test(f.type),
         );
         if (!file) return;
         e.preventDefault();
@@ -268,7 +275,7 @@ export function CoverEditor({
               const items = await navigator.clipboard.read();
               for (const item of items) {
                 const type = item.types.find((t) =>
-                  /^image\/(png|jpeg|webp)$/.test(t),
+                  /^image\/(png|jpeg|webp|gif)$/.test(t),
                 );
                 if (type) {
                   const blob = await item.getType(type);

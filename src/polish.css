@@ -511,3 +511,87 @@ button[aria-pressed="true"][aria-label^="Star"] {
   border-radius: 5px;
   pointer-events: none;
 }
+/* Shared, restrained media and movement surfaces. */
+.video-player {
+  width: 100%;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.video-player video {
+  display: block;
+  width: 100%;
+  max-height: 300px;
+  aspect-ratio: 16/9;
+  object-fit: contain;
+  border-radius: 9px;
+  background: #101216;
+}
+.video-player small,
+.video-field small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.video-field {
+  min-width: 0;
+  margin-top: 6px;
+}
+.insert-media .video-field:not(:has(.video-player)) {
+  display: none;
+}
+.insert-media .video-field:has(.video-player) > small {
+  display: none;
+}
+.flint-source {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 6px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.library-storage {
+  display: block;
+  text-align: right;
+  margin-bottom: 10px;
+  color: var(--muted);
+}
+.library-drag-status {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: var(--panel);
+  pointer-events: none;
+  box-shadow: 0 8px 28px #0003;
+}
+.pointer-drag-source {
+  outline: 1px dashed var(--accent);
+  outline-offset: 3px;
+}
+.folder-toolbar [data-library-id]:hover {
+  border-color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pointer-drag-ghost {
+    transform: none !important;
+  }
+}
+/* Reserve image geometry before the asynchronous media path resolves. */
+.matching-board .study-image,
+.matching-board .media-placeholder {
+  height: 160px;
+  min-height: 160px;
+  width: 100%;
+  object-fit: contain;
+  box-sizing: border-box;
+}

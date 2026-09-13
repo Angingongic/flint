@@ -1,3 +1,4 @@
+import { VideoPlayer } from "./Video";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -52,6 +53,7 @@ export function PortableSets({
       });
       onImported({
         ...deck,
+        meta: { ...deck.meta, sharedFlint: true },
         cards: deck.cards.map((c) => ({
           ...c,
           due: new Date(c.dueAt || 0) <= new Date(),
@@ -143,20 +145,12 @@ export function PortableSets({
         name,
         URL.createObjectURL(
           new Blob([new Uint8Array(bytes)], {
-            type: /\.(mp3|m4a|wav|ogg)$/i.test(name)
-              ? (
-                  {
-                    mp3: "audio/mpeg",
-                    m4a: "audio/mp4",
-                    wav: "audio/wav",
-                    ogg: "audio/ogg",
-                  } as Record<string, string>
-                )[name.split(".").at(-1)!.toLowerCase()]
-              : name.toLowerCase().endsWith("png")
-                ? "image/png"
-                : name.toLowerCase().endsWith("webp")
-                  ? "image/webp"
-                  : "image/jpeg",
+            type: mediaMime(
+              name,
+              !!preview?.deck.cards.some(
+                (c) => c.questionAudio === name || c.answerAudio === name,
+              ),
+            ),
           }),
         ),
       ]),
@@ -233,6 +227,9 @@ export function PortableSets({
             {preview.deck.cards.slice(0, 5).map((c) => (
               <div key={c.id}>
                 <b>{c.question}</b>
+                {c.questionVideo && (
+                  <VideoPlayer src={urls[c.questionVideo]} label="Term video" />
+                )}
                 {c.questionAudio && (
                   <AudioPlayer src={urls[c.questionAudio]} label="Term audio" />
                 )}
@@ -240,6 +237,12 @@ export function PortableSets({
                   <img src={urls[c.questionImage]} alt="Term visual" />
                 )}
                 <p>{c.answer}</p>
+                {c.answerVideo && (
+                  <VideoPlayer
+                    src={urls[c.answerVideo]}
+                    label="Definition video"
+                  />
+                )}
                 {c.answerAudio && (
                   <AudioPlayer
                     src={urls[c.answerAudio]}
@@ -276,4 +279,25 @@ export function PortableSets({
       </button>
     </Modal>
   );
+}
+export function mediaMime(name: string, audio = false) {
+  const ext = name.split(".").at(-1)?.toLowerCase() || "";
+  return ext === "webm"
+    ? audio
+      ? "audio/webm"
+      : "video/webm"
+    : (
+        {
+          mp4: "video/mp4",
+          mp3: "audio/mpeg",
+          m4a: "audio/mp4",
+          wav: "audio/wav",
+          ogg: "audio/ogg",
+          png: "image/png",
+          gif: "image/gif",
+          webp: "image/webp",
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+        } as Record<string, string>
+      )[ext] || "application/octet-stream";
 }

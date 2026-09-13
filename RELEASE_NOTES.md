@@ -1,16 +1,14 @@
-# Flint 0.1.7
+# Flint 0.1.8
 
-## Interaction & UI Cleanup
+## Multimedia and Library polish
+- Animated GIFs stay animated on either card side. Local MP4/WebM video and direct audio recording join the Insert menu.
+- Flashcards and Learn manage visible-side playback; Test media starts only when Play is pressed.
+- Shared Flint sets preserve supported multimedia with versioned package validation and a subtle .flint source badge.
+- Nested Library folders support ancestor navigation, recursive rename/move and cycle prevention. New Set follows the current folder.
+- Drag previews distinguish reorder edges from containment centers, with shared restrained movement feedback and Custom sorting.
+- Library storage includes database and media, including files retained for Undo.
+- Redo extends existing editing history; number keys select valid visible multiple-choice answers.
 
-- Real pointer-based Library dragging: reorder sets and folders together, reorder inside folders, move sets in/out, and confirm set-to-set grouping. Manual order persists independently of automatic sorts.
-- Shared right-click and three-dot actions with cursor/button anchoring and viewport collision handling.
-- Matching boards now count as one question, adapt to requested counts, and contain 3–6 pairs. Pointer-follow dragging keeps all answers visible, with keyboard movement and controlled scrolling.
-- Cohesive Library/folder controls collapse on downward scrolling and return on upward scrolling.
-- Integrated Front/Back swap, an obvious title input, focused single-card editing with Save/Cancel/Undo, and visible starred-card states.
-- Interactive cover upload/paste/presets, accurate Flint Originals attribution, and targeted image-drop feedback.
-- Learn and Flashcards have scoped starred-only settings. Learn accent tolerance moves out of global Settings while preserving Unicode grading.
-- Intentional text selection uses orange; draggable objects and UI chrome no longer select accidentally.
+Video/audio codec support depends on the operating system. Multimedia attachments are limited to 25 MiB each; portable packages retain the existing 100 MiB total limit. New multimedia packages require Flint 0.1.8 or later.
 
-Existing image/audio storage, .flint sharing, Trash, backups, study history, and updater architecture are preserved. No database migration or new media formats.
-
-Windows installers are not Authenticode-signed; SmartScreen may warn. The universal macOS build is ad-hoc signed and not notarized; Gatekeeper restrictions remain. Updater signatures use the existing release key.
+Windows installers are not Authenticode-signed (SmartScreen may warn). macOS builds are ad-hoc signed unless Apple credentials are configured and are not notarized by default. Updater signing remains configured in GitHub Actions.

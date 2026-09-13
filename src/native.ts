@@ -18,6 +18,8 @@ const nativeCard = (c: Card) => ({
   answerImage: c.answerImage || null,
   questionAudio: c.questionAudio || null,
   answerAudio: c.answerAudio || null,
+  questionVideo: c.questionVideo || null,
+  answerVideo: c.answerVideo || null,
 });
 export async function exportFlint(deck: Deck) {
   if (!inTauri())
@@ -154,12 +156,21 @@ export async function importMedia(path: string) {
 }
 export async function saveMediaBytes(file: File) {
   const extension = (
-    { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" } as Record<
-      string,
-      string
-    >
+    {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/webp": "webp",
+      "image/gif": "gif",
+    } as Record<string, string>
   )[file.type];
   if (!extension) throw new Error("Unsupported image type");
+  if (!inTauri())
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   return invoke<string>("save_media_bytes", {
     data: Array.from(new Uint8Array(await file.arrayBuffer())),
     extension,
@@ -174,10 +185,10 @@ export async function saveAudioBytes(file: File) {
   const extension = file.name.split(".").at(-1)?.toLowerCase();
   if (
     !extension ||
-    !["mp3", "m4a", "wav", "ogg"].includes(extension) ||
+    !["mp3", "m4a", "wav", "ogg", "webm"].includes(extension) ||
     file.size > 25 * 1024 * 1024
   )
-    throw Error("Choose MP3, M4A, WAV or OGG audio up to 25 MB");
+    throw Error("Choose MP3, M4A, WAV, OGG or WebM audio up to 25 MB");
   if (inTauri())
     return invoke<string>("save_audio_bytes", {
       data: Array.from(new Uint8Array(await file.arrayBuffer())),
@@ -238,4 +249,36 @@ export async function recordTestAttempt(
       ]),
     );
   }
+}
+export async function saveVideoBytes(file: File) {
+  const extension = file.name.split(".").at(-1)?.toLowerCase();
+  if (
+    !extension ||
+    !["mp4", "webm"].includes(extension) ||
+    file.size > 25 * 1024 * 1024
+  )
+    throw Error("Choose MP4 or WebM video up to 25 MB.");
+  if (inTauri())
+    return invoke<string>("save_video_bytes", {
+      data: Array.from(new Uint8Array(await file.arrayBuffer())),
+      extension,
+    });
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+export async function relocateLibraryFolder(
+  source: string,
+  parent: string,
+  name: string,
+) {
+  if (inTauri())
+    await invoke("relocate_library_folder", { source, parent, name });
+}
+export async function libraryStorageBytes(decks: Deck[]) {
+  if (inTauri()) return invoke<number>("library_storage_bytes");
+  return new TextEncoder().encode(JSON.stringify(decks)).length;
 }

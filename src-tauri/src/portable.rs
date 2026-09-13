@@ -1,4 +1,4 @@
-//! Version-one portable sets: ZIP + JSON + raster media, never extracted paths or code.
+//! Versioned portable sets: bounded ZIP + JSON + local media; never extracted paths or code.
 use super::*;
 use std::collections::HashMap;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
@@ -42,6 +42,7 @@ fn valid_image(name: &str, bytes: &[u8]) -> bool {
         .unwrap_or("")
         .to_ascii_lowercase();
     let format = match ext.as_str() {
+        "gif" => return multimedia::valid_gif(bytes),
         "png" => image::ImageFormat::Png,
         "jpg" | "jpeg" => image::ImageFormat::Jpeg,
         "webp" => image::ImageFormat::WebP,
@@ -65,6 +66,8 @@ fn refs(deck: &Deck) -> Vec<&str> {
                 .chain(c.answer_image.iter())
                 .chain(c.question_audio.iter())
                 .chain(c.answer_audio.iter())
+                .chain(c.question_video.iter())
+                .chain(c.answer_video.iter())
         }))
         .map(String::as_str)
         .collect()
@@ -72,7 +75,7 @@ fn refs(deck: &Deck) -> Vec<&str> {
 fn validate(package: &Package) -> Result<(), String> {
     let manifest = &package.manifest;
     let deck = &manifest.deck;
-    if manifest.format != "flint-set" || !matches!(manifest.version, 1 | 2) {
+    if manifest.format != "flint-set" || !matches!(manifest.version, 1 | 2 | 3) {
         return Err(
             "Unsupported Flint set format/version. Update Flint to open newer formats.".into(),
         );
@@ -160,8 +163,12 @@ fn validate(package: &Package) -> Result<(), String> {
             || c.answer.len() > 100000
             || (c.question.trim().is_empty()
                 && c.question_image.is_none()
-                && c.question_audio.is_none())
-            || (c.answer.trim().is_empty() && c.answer_image.is_none() && c.answer_audio.is_none())
+                && c.question_audio.is_none()
+                && c.question_video.is_none())
+            || (c.answer.trim().is_empty()
+                && c.answer_image.is_none()
+                && c.answer_audio.is_none()
+                && c.answer_video.is_none())
         {
             return Err("Invalid card content or duplicate card ID".into());
         }
@@ -186,8 +193,24 @@ fn validate(package: &Package) -> Result<(), String> {
     }
     let references: HashSet<_> = refs(deck).into_iter().collect();
     for c in &deck.cards {
+        for name in c.question_video.iter().chain(c.answer_video.iter()) {
+            if manifest.version < 3
+                || !package.media.get(name).is_some_and(|bytes| {
+                    multimedia::valid_video(
+                        Path::new(name)
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(""),
+                        bytes,
+                    )
+                })
+            {
+                return Err("Invalid video or old package format".into());
+            }
+        }
         for name in c.question_audio.iter().chain(c.answer_audio.iter()) {
             if manifest.version < 2
+                || (name.ends_with(".webm") && manifest.version < 3)
                 || !package.media.get(name).is_some_and(|bytes| {
                     audio::valid_audio(
                         Path::new(name)
@@ -202,10 +225,11 @@ fn validate(package: &Package) -> Result<(), String> {
             }
         }
         for name in c.question_image.iter().chain(c.answer_image.iter()) {
-            if !package
-                .media
-                .get(name)
-                .is_some_and(|bytes| valid_image(name, bytes))
+            if (name.ends_with(".gif") && manifest.version < 3)
+                || !package
+                    .media
+                    .get(name)
+                    .is_some_and(|bytes| valid_image(name, bytes))
             {
                 return Err("Invalid image attachment".into());
             }
@@ -217,6 +241,13 @@ fn validate(package: &Package) -> Result<(), String> {
         if !safe_name(name)
             || bytes.len() as u64 > MAX_ENTRY
             || !(valid_image(name, bytes)
+                || multimedia::valid_video(
+                    Path::new(name)
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(""),
+                    bytes,
+                )
                 || audio::valid_audio(
                     Path::new(name)
                         .extension()
@@ -354,7 +385,11 @@ pub fn export_flint(path: String, deck: Deck, db: State<Db>) -> Result<(), Strin
         &Package {
             manifest: Manifest {
                 format: "flint-set".into(),
-                version: if deck
+                version: if refs(&deck).iter().any(|name| {
+                    name.ends_with(".gif") || name.ends_with(".webm") || name.ends_with(".mp4")
+                }) {
+                    3
+                } else if deck
                     .cards
                     .iter()
                     .any(|c| c.question_audio.is_some() || c.answer_audio.is_some())
@@ -383,6 +418,8 @@ pub fn preview_flint(path: String, pending: State<PendingSet>) -> Result<Preview
                 .chain(c.answer_image.iter())
                 .chain(c.question_audio.iter())
                 .chain(c.answer_audio.iter())
+                .chain(c.question_video.iter())
+                .chain(c.answer_video.iter())
         }))
         .collect();
     let media = package
@@ -405,6 +442,7 @@ pub fn cancel_flint(token: String, pending: State<PendingSet>) -> Result<(), Str
 fn import_package(package: &Package, db: &Db) -> Result<Deck, String> {
     validate(package)?;
     let mut deck = package.manifest.deck.clone();
+    deck.meta["sharedFlint"] = serde_json::json!(true);
     deck.id = Uuid::new_v4().to_string();
     let ids: HashMap<_, _> = deck
         .cards
@@ -456,6 +494,8 @@ fn import_package(package: &Package, db: &Db) -> Result<Deck, String> {
                     .chain(c.answer_image.iter_mut())
                     .chain(c.question_audio.iter_mut())
                     .chain(c.answer_audio.iter_mut())
+                    .chain(c.question_video.iter_mut())
+                    .chain(c.answer_video.iter_mut())
             }))
         {
             if let Some(new) = mapped.get(name) {
@@ -538,6 +578,8 @@ fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<P
                     prior.answer_image = incoming.answer_image;
                     prior.question_audio = incoming.question_audio;
                     prior.answer_audio = incoming.answer_audio;
+                    prior.question_video = incoming.question_video;
+                    prior.answer_video = incoming.answer_video;
                 }
                 if let Some(stars) = deck
                     .meta
@@ -567,6 +609,8 @@ fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<P
                 .chain(c.answer_image.iter())
                 .chain(c.question_audio.iter())
                 .chain(c.answer_audio.iter())
+                .chain(c.question_video.iter())
+                .chain(c.answer_video.iter())
         }))
         .cloned()
         .collect();
@@ -679,6 +723,85 @@ mod tests {
             .unwrap(),
             "față"
         );
+    }
+    #[test]
+    fn multimedia_v3_roundtrip_reopen_backup_and_cleanup() {
+        let dir = tempdir().unwrap();
+        let mut package = fixture();
+        package.manifest.version = 3;
+        let gif=b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x00\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b".to_vec();
+        let mp4 = b"\x00\x00\x00\x18ftypisom".to_vec();
+        let voice = vec![0x1a, 0x45, 0xdf, 0xa3, 0x80];
+        package.media.insert("animation.gif".into(), gif.clone());
+        package.media.insert("clip.mp4".into(), mp4.clone());
+        package.media.insert("recording.webm".into(), voice.clone());
+        let card = &mut package.manifest.deck.cards[0];
+        card.question = String::new();
+        card.answer = String::new();
+        card.question_image = Some("animation.gif".into());
+        card.question_video = Some("clip.mp4".into());
+        card.answer_video = Some("clip.mp4".into());
+        card.question_audio = Some("recording.webm".into());
+        let path = dir.path().join("multimedia.flint");
+        write_package(&path, &package).unwrap();
+        let parsed = read_package(&path).unwrap();
+        assert_eq!(parsed.media, package.media);
+        let media_dir = dir.path().join("media");
+        fs::create_dir(&media_dir).unwrap();
+        let db_path = dir.path().join("library.sqlite3");
+        let db = Db {
+            conn: Mutex::new(open_db(&db_path).unwrap()),
+            path: db_path.clone(),
+            media_dir: media_dir.clone(),
+        };
+        let deck = import_package(&parsed, &db).unwrap();
+        assert_eq!(deck.meta["sharedFlint"], true);
+        let refs = [
+            (deck.cards[0].question_image.clone().unwrap(), gif),
+            (deck.cards[0].question_video.clone().unwrap(), mp4),
+            (deck.cards[0].question_audio.clone().unwrap(), voice),
+        ];
+        for (name, bytes) in &refs {
+            assert_eq!(fs::read(media_dir.join(name)).unwrap(), *bytes);
+        }
+        db.conn
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA wal_checkpoint(FULL)")
+            .unwrap();
+        let backup = dir.path().join("multimedia.flintbackup");
+        write_backup(&db_path, Some(&media_dir), &backup, "0.1.8").unwrap();
+        let mut zip = ZipArchive::new(fs::File::open(backup).unwrap()).unwrap();
+        for (name, expected) in &refs {
+            let mut bytes = Vec::new();
+            zip.by_name(&format!("media/{name}"))
+                .unwrap()
+                .read_to_end(&mut bytes)
+                .unwrap();
+            assert_eq!(bytes, *expected);
+        }
+        drop(db);
+        let mut c = open_db(&db_path).unwrap();
+        let persisted: (String, String, String) = c
+            .query_row(
+                "SELECT question_image,question_video,question_audio FROM cards WHERE id=?",
+                [&deck.cards[0].id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            persisted,
+            (refs[0].0.clone(), refs[1].0.clone(), refs[2].0.clone())
+        );
+        let mut deleted = deck;
+        deleted.meta["deletedAt"] = (Utc::now() - Duration::days(8)).to_rfc3339().into();
+        persist_details(&c, &deleted).unwrap();
+        trash::prune(&mut c, &media_dir, Utc::now()).unwrap();
+        for (name, _) in refs {
+            assert!(!media_dir.join(name).exists());
+        }
+        package.manifest.version = 2;
+        assert!(write_package(&path, &package).is_err());
     }
     #[test]
     fn audio_only_roundtrip_persistence_backup_and_cleanup() {

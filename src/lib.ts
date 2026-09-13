@@ -17,6 +17,8 @@ export type Card = {
   answerImage?: string | null;
   questionAudio?: string | null;
   answerAudio?: string | null;
+  questionVideo?: string | null;
+  answerVideo?: string | null;
 };
 export type Deck = {
   id: string;
@@ -29,6 +31,7 @@ export type Deck = {
   coverImage?: string | null;
   createdAt?: string;
   meta?: {
+    sharedFlint?: boolean;
     description?: string;
     folder?: string;
     tags?: string[];
@@ -62,6 +65,8 @@ export const newCard = (
   answerImage: null,
 });
 export type CardDraft = {
+  questionVideo?: string | null;
+  answerVideo?: string | null;
   question?: string;
   answer?: string;
   questionImage?: string | null;
@@ -71,8 +76,14 @@ export type CardDraft = {
 };
 export function isValidCardDraft(card: CardDraft) {
   return (
-    (!!card.question?.trim() || !!card.questionImage || !!card.questionAudio) &&
-    (!!card.answer?.trim() || !!card.answerImage || !!card.answerAudio)
+    (!!card.question?.trim() ||
+      !!card.questionImage ||
+      !!card.questionAudio ||
+      !!card.questionVideo) &&
+    (!!card.answer?.trim() ||
+      !!card.answerImage ||
+      !!card.answerAudio ||
+      !!card.answerVideo)
   );
 }
 export function canCreateDeck(title: string, cards: CardDraft[]) {
