@@ -96,6 +96,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
+      - name: Normalize draft updater URLs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/normalize-release.mjs
       - name: Validate all updater entries before publication
         env:
           GH_TOKEN: ${{ github.token }}
