@@ -12,6 +12,7 @@ import {
 import { App } from "./App";
 import { Flashcards, WaveLearn, WorksheetTest } from "./Study";
 import { newCard, Deck } from "./lib";
+import {createGrid,pasteGrid,createOcclusion,addRegion,updateRegion} from "./structured";
 import {
   loadStudySession,
   saveStudySession,
@@ -89,6 +90,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("study interactions", () => {
+  it.each(["table","occlusion"])("includes %s cards through the real Learn entry point and resumes target state",async(type)=>{
+    const structure=type==="table" ? pasteGrid(createGrid(3,2),"Element\tSymbol\nHydrogen\tH\nCarbon\tC",0,0) : (()=>{const value=addRegion({...createOcclusion(),image:"source.png"},{x:.1,y:.1,width:.2,height:.2});return updateRegion(value,value.regions[0].id,{answer:"Nucleus"});})();
+    const structuredDeck={...deck,id:"structured-entry",cards:[{...newCard("",""),id:"knowledge",structure}]};
+    const view=render(<WaveLearn deck={structuredDeck} done={()=>{}}/>);
+    const start=await screen.findByRole("button",{name:"Start"});fireEvent.click(start);
+    await waitFor(()=>expect(saveStudySession).toHaveBeenCalled());
+    expect(screen.queryByText("No cards yet")).toBeNull();
+    await waitFor(()=>expect(document.querySelector(".structured-view")).toBeTruthy());
+    view.unmount();render(<WaveLearn deck={structuredDeck} done={()=>{}}/>);
+    expect(await screen.findByRole("button",{name:/Resume/i})).toBeTruthy();
+  });
   it("persists cover selection, searches metadata, and supports trash, undo and restore", async () => {
     localStorage.setItem(
       "flint-decks",
@@ -143,6 +155,7 @@ describe("study interactions", () => {
         name: "Delete set",
       }),
     );
+    fireEvent.click(await screen.findByLabelText("Library menu"));
     await screen.findByRole("button", { name: "Trash" });
     fireEvent.click(screen.getByRole("button", { name: "Trash" }));
     fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
@@ -198,8 +211,7 @@ describe("study interactions", () => {
     expect(
       (
         within(first)
-          .getAllByRole("radio")[0]
-          .closest("fieldset") as HTMLFieldSetElement
+          .getAllByRole("radio")[0] as HTMLInputElement
       ).disabled,
     ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Submit test" }));
@@ -296,6 +308,7 @@ describe("study interactions", () => {
         files: [new File(["replacement"], "cell.webp", { type: "image/webp" })],
       },
     });
+    fireEvent.click(within(screen.getByRole("dialog", {name:"Replace existing image?"})).getByRole("button", {name:"Replace"}));
     // Uploads preserve their MIME type; wait for FileReader's replacement,
     // not the unchanged number of thumbnails from the original PNG upload.
     await waitFor(() =>
@@ -391,7 +404,7 @@ describe("study interactions", () => {
     expect(studyMissed.mock.calls[0][0].id).toBe(deck.id);
     expect(studyMissed.mock.calls[0][0].cards).toHaveLength(10);
   });
-  it("runs four MC then four typed, requeues typed B, and resumes the persisted queue", async () => {
+  it("runs recognition then recall, retains misses for the final weak phase, and resumes the next wave", async () => {
     const view = render(<WaveLearn deck={deck} done={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: "Start" }));
     for (let i = 0; i < 4; i++) {
@@ -418,14 +431,16 @@ describe("study interactions", () => {
       await screen.findByText("4 terms practiced · 3 stronger · 1 need work"),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByText("Definition 1");
+    await screen.findByText("Definition 4");
     view.unmount();
     render(<WaveLearn deck={deck} done={() => {}} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Continue Learn" }),
+      await screen.findByRole("button", { name: "Resume" }),
     );
-    expect(screen.getByText("Definition 1")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Term 1" })).toBeTruthy();
+    expect(screen.getByText("Definition 4")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Term 4" })).toBeTruthy();
+    const saved=vi.mocked(saveStudySession).mock.calls.at(-1)![2] as {mistakes:Record<string,number>};
+    expect(saved.mistakes.c1).toBe(1);
   });
   it("keeps the 20-card Colors viewer correct under rapid flip and navigation input", async () => {
     render(<Flashcards deck={colors} done={() => {}} />);
@@ -560,8 +575,33 @@ describe("study interactions", () => {
     ).toBeTruthy();
     expect(reviewNative).toHaveBeenCalledTimes(8);
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await screen.findByText("Color Blue");
-    expect(screen.getByRole("button", { name: "Blue" })).toBeTruthy();
+    await screen.findByText("Color Purple");
+    expect(screen.getByRole("button", { name: "Purple" })).toBeTruthy();
+  });
+  it.each(["background", "field", "toolbar"])("adds with Ctrl+Enter and saves with Ctrl+S from %s", async target => {
+    localStorage.setItem("flint-decks", JSON.stringify([deck]));
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", {name:"Library"}));
+    fireEvent.click(screen.getByRole("button", {name:"Edit"}));
+    const field=screen.getAllByPlaceholderText("Add front text")[0];
+    fireEvent.change(field,{target:{value:"Shortcut saved"}});
+    const save=screen.getByRole("button",{name:"Save"});
+    const focus=target==="field"?field:target==="toolbar"?save:document.body;
+    fireEvent.keyDown(focus,{key:"Enter",ctrlKey:true,isComposing:true});
+    expect(screen.getByRole("button",{name:"Save"})).toBeTruthy();
+    fireEvent.keyDown(focus,{key:"Enter",ctrlKey:true});
+    expect(screen.getAllByPlaceholderText("Add front text")).toHaveLength(deck.cards.length+1);
+    fireEvent.keyDown(focus,{key:"z",ctrlKey:true});
+    expect(screen.getAllByPlaceholderText("Add front text")).toHaveLength(deck.cards.length);
+    fireEvent.keyDown(focus,{key:"z",ctrlKey:true,shiftKey:true});
+    expect(screen.getAllByPlaceholderText("Add front text")).toHaveLength(deck.cards.length+1);
+    fireEvent.keyDown(focus,{key:"z",ctrlKey:true});
+    fireEvent.keyDown(focus,{key:"s",ctrlKey:true});
+    await waitFor(()=>{
+      const saved=JSON.parse(localStorage.getItem("flint-decks")||"[]")[0];
+      expect(saved.cards[0].question).toBe("Shortcut saved");
+      expect(saved.cards).toHaveLength(deck.cards.length);
+    });
   });
   it("keeps large editable card sides and saves ten cards without resetting existing review history", async () => {
     const existing = {

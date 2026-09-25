@@ -43,7 +43,8 @@ fn prune_with_target(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let mut images = HashSet::<String>::new();
     for id in &ids {
-        let mut st=tx.prepare("SELECT cover_image FROM decks WHERE id=?1 UNION SELECT question_image FROM cards WHERE deck_id=?1 UNION SELECT answer_image FROM cards WHERE deck_id=?1 UNION SELECT question_audio FROM cards WHERE deck_id=?1 UNION SELECT answer_audio FROM cards WHERE deck_id=?1 UNION SELECT question_video FROM cards WHERE deck_id=?1 UNION SELECT answer_video FROM cards WHERE deck_id=?1 UNION SELECT name FROM media_retired WHERE deck_id=?1").map_err(|e|e.to_string())?;
+        images.extend(structured::stored_images(&tx,Some(id))?);
+        let mut st=tx.prepare("SELECT cover_image FROM decks WHERE id=?1 UNION SELECT question_image FROM cards WHERE deck_id=?1 UNION SELECT answer_image FROM cards WHERE deck_id=?1 UNION SELECT question_audio FROM cards WHERE deck_id=?1 UNION SELECT answer_audio FROM cards WHERE deck_id=?1 UNION SELECT question_video FROM cards WHERE deck_id=?1 UNION SELECT answer_video FROM cards WHERE deck_id=?1 UNION SELECT json_extract(structure_json,'$.image') FROM cards WHERE deck_id=?1 AND json_extract(structure_json,'$.type')='occlusion' UNION SELECT name FROM media_retired WHERE deck_id=?1").map_err(|e|e.to_string())?;
         for name in st
             .query_map([id], |r| r.get::<_, Option<String>>(0))
             .map_err(|e| e.to_string())?
@@ -81,6 +82,7 @@ fn prune_with_target(
             .map_err(|e| e.to_string())?;
         values
     };
+    let references=crate::media_lifecycle::references(conn)?;
     for name in images {
         if Path::new(&name).file_name().and_then(|s| s.to_str()) != Some(&name)
             || name.contains(':')
@@ -90,13 +92,14 @@ fn prune_with_target(
                 .map_err(|e| e.to_string())?;
             continue;
         }
-        let used:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM decks WHERE cover_image=?1 UNION ALL SELECT 1 FROM cards WHERE question_image=?1 OR answer_image=?1 OR question_audio=?1 OR answer_audio=?1 OR question_video=?1 OR answer_video=?1)",[&name],|r|r.get(0)).map_err(|e|e.to_string())?;
+        let used=references.contains(&name);
         if !used {
             match fs::remove_file(media.join(&name)) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(format!("Trash removed; media cleanup needs retry: {e}")),
             }
+            if !references.contains(&format!("{name}.poster.jpg")) {crate::multimedia::remove_poster(media, &name)?;}
         }
         conn.execute("DELETE FROM media_cleanup WHERE name=?", [&name])
             .map_err(|e| e.to_string())?;
@@ -137,6 +140,23 @@ pub fn update_decks_details(decks: Vec<Deck>, db: State<Db>) -> Result<(), Strin
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    #[test]
+    fn permanent_video_removal_reclaims_bytes_only_after_last_reference() {
+        let dir=tempdir().unwrap();let media=dir.path().join("media");fs::create_dir(&media).unwrap();
+        let mut conn=open_db(&dir.path().join("db")).unwrap();let now=Utc::now();
+        let name=format!("{}.mp4",Uuid::new_v4());let poster=format!("{name}.poster.jpg");
+        let file=fs::File::create(media.join(&name)).unwrap();file.set_len(20*1024*1024).unwrap();drop(file);
+        fs::write(media.join(&poster),b"poster").unwrap();
+        let mut a=fixture("one",Some(now),"flint:preset/ember");a.cards[0].question_video=Some(name.clone());
+        let mut b=fixture("two",None,"flint:preset/ember");b.cards[0].answer_video=Some(name.clone());
+        persist_deck(&mut conn,&a,None).unwrap();persist_deck(&mut conn,&b,None).unwrap();
+        prune_with_target(&mut conn,&media,now,Some("one")).unwrap();
+        assert_eq!(fs::metadata(media.join(&name)).unwrap().len(),20*1024*1024);assert!(media.join(&poster).exists());
+        b.meta["deletedAt"]=serde_json::json!(now.to_rfc3339());persist_deck(&mut conn,&b,None).unwrap();
+        assert!(prune(&mut conn,&media,now).unwrap().is_empty());assert!(media.join(&name).exists());
+        prune_with_target(&mut conn,&media,now,Some("two")).unwrap();
+        assert!(!media.join(&name).exists());assert!(!media.join(&poster).exists());
+    }
     fn fixture(id: &str, deleted: Option<DateTime<Utc>>, image: &str) -> Deck {
         serde_json::from_value(serde_json::json!({"id":id,"title":id,"subject":"Test","color":"#fff","favorite":false,"coverImage":image,"meta":{"deletedAt":deleted.map(|d|d.to_rfc3339()),"folder":"Folder"},"cards":[{"id":format!("{id}-card"),"question":"Term","answer":"Answer","status":"New","accuracy":0.0,"dueAt":"2026-09-01T00:00:00Z","intervalDays":0.0,"ease":2.5,"repetitions":0,"lapses":0}]})).unwrap()
     }

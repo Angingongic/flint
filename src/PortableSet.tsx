@@ -1,4 +1,6 @@
 import { VideoPlayer } from "./Video";
+import { flintFormatName, parseFormatIssue, formatIssueMessage } from "./flint-format";
+import { StructuredView } from "./StructuredView";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -15,6 +17,9 @@ export type PortablePreview = {
   token: string;
   deck: Deck;
   media: Record<string, number[]>;
+  formatVersion?: number;
+  createdWithFlintVersion?: string;
+  minimumFlintVersion?: string;
 };
 export function importConflicts(deck: Deck, decks: Deck[]) {
   return {
@@ -40,6 +45,8 @@ export function PortableSets({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const lock = useRef(false);
+  const [failedPath,setFailedPath]=useState("");
+  const [repaired,setRepaired]=useState(false);
   const [reviewDuplicates, setReviewDuplicates] = useState(false);
   const importPreview = async (choices: DuplicateChoice[] = []) => {
     if (lock.current || !preview) return;
@@ -120,13 +127,15 @@ export function PortableSets({
   useEffect(() => {
     if (!paths.length || preview || error) return;
     let active = true;
+    setRepaired(false);
+    setFailedPath("");
     setBusy(true);
     void invoke<PortablePreview>("preview_flint", { path: paths[0] })
       .then((result) => {
         if (active) setPreview(result);
       })
       .catch((e) => {
-        if (active) setError(String(e));
+        if (active) {setError(String(e));setFailedPath(paths[0]);}
       })
       .finally(() => {
         if (active) {
@@ -175,6 +184,7 @@ export function PortableSets({
       </div>
     ) : null;
   const conflict = preview && importConflicts(preview.deck, decks);
+  const formatIssue = parseFormatIssue(error);
   if (reviewDuplicates && preview)
     return (
       <DuplicateReview
@@ -190,10 +200,15 @@ export function PortableSets({
         void close();
       }}
     >
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert" style={{whiteSpace:"pre-line"}}>{formatIssue ? formatIssueMessage(formatIssue) : error}</p>}
+      {formatIssue?.kind === "unsupported" && <a className="primary" href="https://github.com/Angingongic/flint/releases/latest" target="_blank" rel="noreferrer">Update Flint</a>}
+      {formatIssue?.kind === "corrupt" && <button disabled={!formatIssue.repairable || busy || !failedPath} title={formatIssue.repairable ? "Restore missing derived metadata; leave the original file unchanged" : "Required authored content cannot be safely reconstructed"} onClick={async()=>{setBusy(true);try{const result=await invoke<PortablePreview>("preview_flint",{path:failedPath,repair:true});setPreview(result);setError("");setRepaired(true);}catch(e){setError(String(e));}finally{setBusy(false);}}}>Repair Set</button>}
+      {repaired && preview && <p role="status">Repair complete. Restored missing derived study scheduling metadata. No study content was changed. The original file was not modified.</p>}
+      <p>Flint opens .flint files after installation. <a href="https://github.com/Angingongic/flint/releases/latest" target="_blank" rel="noreferrer">Download the latest Flint</a></p>
       {preview && (
         <div className="portable-import">
           <h2>{preview.deck.title}</h2>
+          {preview.formatVersion && <p>Flint format: {flintFormatName(preview.formatVersion) || "Unknown"}{preview.createdWithFlintVersion ? ` · Created with Flint ${preview.createdWithFlintVersion}` : ""}</p>}
           <p>
             {preview.deck.cards.length} cards · {preview.deck.subject}
           </p>
@@ -226,6 +241,7 @@ export function PortableSets({
           <div className="portable-preview">
             {preview.deck.cards.slice(0, 5).map((c) => (
               <div key={c.id}>
+                {c.structure ? <StructuredView value={c.structure.type === "occlusion" ? {...c.structure,image:urls[c.structure.image] || ""} : {...c.structure,images:Object.fromEntries(Object.entries(c.structure.images||{}).map(([key,name])=>[key,urls[name]||""]))}} mode="reference"/> : <>
                 <b>{c.question}</b>
                 {c.questionVideo && (
                   <VideoPlayer src={urls[c.questionVideo]} label="Term video" />
@@ -252,6 +268,7 @@ export function PortableSets({
                 {c.answerImage && (
                   <img src={urls[c.answerImage]} alt="Definition visual" />
                 )}
+                </>}
               </div>
             ))}
           </div>

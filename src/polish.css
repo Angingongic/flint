@@ -60,7 +60,7 @@
   max-width: 100%;
   max-height: 280px;
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: 16px;
   margin: 12px auto;
 }
 .deck > .study-image {
@@ -512,24 +512,44 @@ button[aria-pressed="true"][aria-label^="Star"] {
   pointer-events: none;
 }
 /* Shared, restrained media and movement surfaces. */
+.recorder-tools { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.microphone-meter { height:22px; overflow:hidden; border-radius:6px; background:var(--soft); border:1px solid var(--line); margin:12px 0 6px; }
+.microphone-meter span { display:block; height:100%; background:var(--orange); transform-origin:left; }
 .video-player {
-  width: 100%;
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
-  padding: 6px;
+  margin-inline: auto;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--panel);
+  background: #101216;
+  box-shadow: 0 4px 18px #0002;
   overflow: hidden;
 }
-.video-player video {
+.video-viewport { position:relative; width:100%; min-height:0; overflow:hidden; background:#101216; }
+.video-player .video-viewport video {
   display: block;
   width: 100%;
-  max-height: 300px;
-  aspect-ratio: 16/9;
+  height: 100%;
+  max-width: none;
+  max-height: none;
   object-fit: contain;
-  border-radius: 9px;
+  border-radius: 0;
   background: #101216;
 }
+.video-player .video-controls { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:8px; color:#fff; background:linear-gradient(#20232a,#101216); position:relative; z-index:2; }
+.video-player.video-player .video-controls button, .video-player.video-player .video-center-play { display:grid; place-items:center; padding:6px; width:32px; height:32px; min-width:32px; min-height:32px; flex:0 0 auto; margin:0; border:1px solid #ffffff45; border-radius:8px; color:#fff; background:#ffffff15; }
+.video-player .video-controls svg { width:17px; height:17px; }
+.video-player .video-controls input[type=range] { flex:1; min-width:45px; width:70px; height:24px; min-height:24px; margin:0; padding:0; cursor:pointer; touch-action:none; accent-color:var(--orange); }
+.video-player .video-controls input.video-volume { flex:0 1 55px; }
+.video-time { font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.video-player.video-player .video-center-play { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:52px; height:52px; border-radius:50%; background:#101216aa; backdrop-filter:blur(6px); z-index:1; }
+.video-player:focus-visible, .video-player button:focus-visible, .video-player input:focus-visible { outline:2px solid var(--orange); outline-offset:2px; }
+.video-player:fullscreen { width:100% !important; height:100% !important; display:flex; flex-direction:column; justify-content:center; border:0; border-radius:0; }
+.video-player:fullscreen .video-viewport { flex:0 1 auto; max-height:calc(100vh - 80px); width:auto; max-width:100%; margin:auto; }
+.video-player:fullscreen .video-controls { flex-shrink:0; width:100%; }
 .video-player small,
 .video-field small {
   display: block;
@@ -595,3 +615,22 @@ button[aria-pressed="true"][aria-label^="Star"] {
   object-fit: contain;
   box-sizing: border-box;
 }
+.selectable-image { position:relative; width:fit-content; max-width:100%; border-radius:12px; outline:1px solid transparent; outline-offset:3px; }
+.selectable-image:focus-within { outline-color:var(--accent, #ff713e); }
+.selectable-image > .study-image { display:block; margin:0; max-width:100%; height:auto; border-radius:12px; }
+.selected-image-actions { display:none; position:absolute; top:4px; right:4px; gap:2px; padding:3px; border:1px solid var(--border); border-radius:9px; background:var(--panel, #20252c); box-shadow:0 3px 12px #0003; }
+.selectable-image:focus-within > .selected-image-actions { display:flex; }
+.selected-image-actions .icon { width:27px; height:27px; padding:4px; }
+.selected-image-preview .study-image { max-width:100%; max-height:70vh; object-fit:contain; }
+.attachment > .selectable-image > .study-image { max-width:180px; max-height:180px; object-fit:contain; }
+.learn-session { width:100%; max-width:1040px; margin-inline:auto; }
+.learn-session .learn-progress { margin-bottom:10px; }
+.learn-session .wave-progress { margin-bottom:18px; gap:18px; }
+.learn-session .learn-question { min-height:0; padding:8px 0 20px; }
+.learn-question-actions { display:flex; align-items:center; justify-content:center; gap:14px; margin:20px auto 0; }
+.learn-question .learn-question-actions .learn-skip { margin:0; }
+.choice-with-audio:has(.video-player) { border:1px solid var(--line); border-radius:14px; overflow:hidden; padding:8px; display:flex; flex-direction:column; gap:8px; }
+.choice-with-audio:has(.video-player) > button { min-height:48px; }
+.test-choice-media:has(.video-player) { border:1px solid var(--line); border-radius:14px; padding:8px; min-width:0; background:var(--surface); }
+.test-choice-media:has(input:checked) { outline:2px solid var(--orange); outline-offset:-2px; }
+@media(max-width:700px) { .learn-session .wave-progress { gap:10px; margin-bottom:10px; } .learn-question-actions { gap:8px; margin-top:12px; } }

@@ -1,9 +1,18 @@
 import { VideoPlayer } from "./Video";
+import { confidenceGrade } from "./confidence";
+import { useStudyMediaSize } from "./media-layout";
+import { AnswerMark } from "./AnswerMark";
+import { readPreference, writePreference } from "./preferences";
 import { SingleCardEditor } from "./SingleCardEditor";
 import { StudyScope } from "./StudyScope";
 import { useEffect, useRef, useState } from "react";
-import { Deck } from "./lib";
+import { Deck, isValidCardDraft } from "./lib";
 import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
+import { StructuredView } from "./StructuredView";
+import { MathText } from "./MathText";
+import { parseStructuredUnit, structuredTargets, structuredSignature, structuredUnitId, type Target } from "./structured";
+import { structuredAnswers } from "./test-engine";
+import { learnIds } from "./learn-engine";
 import { editableTarget } from "./editing";
 import { AudioPlayer } from "./Audio";
 import {
@@ -24,6 +33,10 @@ import {
   grade,
   learnProgress,
   shuffle,
+  shuffleLearn,
+  structuredLearnGroup,
+  answerLearnGroup,
+  prepareLearnChoices,
   sides,
 } from "./learn-engine";
 import "./study.css";
@@ -47,6 +60,7 @@ export function StudyImage({
   video,
   autoplay = false,
   active = true,
+  mode = "study",
 }: {
   name?: string | null;
   alt: string;
@@ -54,9 +68,13 @@ export function StudyImage({
   video?: string | null;
   autoplay?: boolean;
   active?: boolean;
+  mode?: "study"|"choice"|"preview";
 }) {
   const [src, setSrc] = useState(""),
     [imageError, setImageError] = useState(false);
+  const [dimensions,setDimensions]=useState({src:"",width:0,height:0});
+  const imageRef=useRef<HTMLImageElement>(null);
+  const size=useStudyMediaSize(imageRef,dimensions.src===src?dimensions.width:0,dimensions.src===src?dimensions.height:0,"image",undefined,mode);
   useEffect(() => {
     let active = true;
     setSrc("");
@@ -81,9 +99,12 @@ export function StudyImage({
       )}
       {src && (
         <img
+          ref={imageRef}
           className="study-image"
           src={src}
           alt={alt}
+          style={size?{width:size.width,height:"auto"}:undefined}
+          onLoad={e=>setDimensions({src,width:e.currentTarget.naturalWidth,height:e.currentTarget.naturalHeight})}
           onError={() => {
             setSrc("");
             setImageError(true);
@@ -91,6 +112,7 @@ export function StudyImage({
         />
       )}
       <VideoPlayer
+        mode={mode}
         name={video}
         active={active}
         autoplay={autoplay}
@@ -237,63 +259,29 @@ export function SetOverview({
             </button>
           ))}
         </div>
-        <div className="secondary-modes">
-          <button
-            className="secondary"
-            disabled={!deck.cards.length}
-            onClick={() => start("typed")}
-          >
-            Typed Answer
-          </button>
-          <button
-            className="secondary"
-            disabled={!deck.cards.length}
-            onClick={() => start("word")}
-          >
-            Word-for-Word
-          </button>
-          <button
-            className="secondary"
-            disabled={!due}
-            onClick={() => start("due")}
-          >
-            Due Cards · {due}
-          </button>
-          <button
-            className="secondary"
-            disabled={
-              !deck.cards.some(
-                (c) =>
-                  (c.lapses || 0) > 0 ||
-                  ((c.repetitions || 0) > 0 && c.accuracy < 70),
-              )
-            }
-            onClick={() => start("weak")}
-          >
-            Weak Cards
-          </button>
-        </div>
       </div>
       <div className="set-card-list">
         <h2>Cards in this set</h2>
-        {deck.cards.map((card, index) => (
+        {deck.cards.map((card, index) => ({card,index})).sort((a,b) => Number(!!deck.meta?.starredCards?.includes(b.card.id))-Number(!!deck.meta?.starredCards?.includes(a.card.id))).map(({card,index}) => (
           <div key={card.id}>
             <small>{String(index + 1).padStart(2, "0")}</small>
             <section className="term-copy">
-              <p>{card.question}</p>
+              {card.structure ? <StructuredView value={card.structure} mode="reference"/> : <>
+              <p><MathText text={card.question}/></p>
               <StudyImage
                 name={card.questionImage}
                 audio={card.questionAudio}
                 video={card.questionVideo}
                 alt="Question"
               />
-              <p>{card.answer}</p>
+              <p><MathText text={card.answer}/></p>
               <StudyImage
                 name={card.answerImage}
                 audio={card.answerAudio}
                 video={card.answerVideo}
                 alt="Answer"
               />
+              </>}
             </section>
             <div className="term-actions">
               <button
@@ -341,7 +329,7 @@ export function SetOverview({
 }
 
 function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
-  const [cards, setCards] = useState(deck.cards),
+  const [cards, setCards] = useState(() => readPreference("shuffle-new", false) ? shuffle(deck.cards) : deck.cards),
     [index, setIndex] = useState(0),
     [flipped, setFlipped] = useState(false);
   const [direction, setDirection] = useState("terms");
@@ -353,6 +341,7 @@ function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
   const indexRef = useRef(index);
   const [flips, setFlips] = useState(0);
   const flip = () => {
+    if (cards[indexRef.current]?.structure) return;
     setFlipped((v) => !v);
     setFlips((n) => n + 1);
   };
@@ -462,6 +451,7 @@ function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
           </div>
         )}
         <div key={cards[index].id} className={previous ? "viewer-travel" : ""}>
+          {cards[index].structure ? <StructuredView value={cards[index].structure!} mode="reference" /> : <>
           <div
             className={"viewer-card " + (flipped ? "is-flipped" : "")}
             role="button"
@@ -482,7 +472,7 @@ function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
                 autoplay
                 alt="Front visual"
               />
-              <h1>{side.prompt}</h1>
+              <h1><MathText text={side.prompt}/></h1>
             </div>
             <div
               className="viewer-face viewer-back"
@@ -498,9 +488,10 @@ function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
                 autoplay
                 alt="Back visual"
               />
-              <h1>{side.answer}</h1>
+              <h1><MathText text={side.answer}/></h1>
             </div>
           </div>
+          </>}
         </div>
       </div>
       <div className="viewer-nav">
@@ -513,7 +504,7 @@ function FlashcardsSession({ deck, done }: { deck: Deck; done: () => void }) {
           ←
         </button>
         <span className={flips >= 3 ? "learned-hints" : ""}>
-          Click, Space, ↑ or ↓ to flip
+          {cards[index].structure ? "Complete reference · use arrows to navigate" : "Click, Space, ↑ or ↓ to flip"}
         </span>
         <button
           className="secondary"
@@ -578,7 +569,10 @@ function WaveLearnSession({
   const [state, setState] = useState<WaveState | null>(null),
     [loaded, setLoaded] = useState(false),
     [started, setStarted] = useState(false);
-  const [options, setOptions] = useState<LearnOptions>(defaultOptions),
+  const [options, setOptions] = useState<LearnOptions>(() => ({...defaultOptions,
+    confidence:readPreference("learn-confidence",true),
+    choice:readPreference("learn-choice",true),typed:readPreference("learn-typed",true),
+    grading:readPreference("learn-strict",false)?"strict":"normal"})),
     [user, setUser] = useState("");
   const [feedback, setFeedback] = useState(""),
     [error, setError] = useState(""),
@@ -592,6 +586,8 @@ function WaveLearnSession({
     selected?: string;
     result: "CORRECT" | "CLOSE" | "INCORRECT" | "DIDNT_KNOW";
     saved: boolean;
+    targets?: Target[];
+    targetResults?: Record<string,boolean>;
   } | null>(null);
   const [phase, setPhase] = useState(false);
   const reduced = useReducedMotion();
@@ -603,13 +599,13 @@ function WaveLearnSession({
     },
     [],
   );
-  const sessionKey = "learn-waves-v1-" + deck.cards.map((c) => c.id).join("_");
+  const sessionKey = "learn-waves-v1-" + deck.cards.map((c) => c.id + (c.structure ? structuredSignature(c.structure) : "")).join("_");
   useEffect(() => {
     loadStudySession<WaveState>(deck.id, sessionKey)
       .then(async (saved) => {
         if (
           saved?.version === 1 &&
-          saved.ids.join() === deck.cards.map((c) => c.id).join()
+          [...saved.ids].sort().join() === learnIds(deck.cards).sort().join()
         ) {
           if (learnComplete(saved)) {
             await saveStudySession(
@@ -617,8 +613,12 @@ function WaveLearnSession({
               sessionKey + "-history-" + crypto.randomUUID(),
               saved,
             );
-          } else setState(saved);
-          setOptions(saved.options);
+          } else {
+            const prepared=prepareLearnChoices({...saved,phase:saved.phase || "learning",options:{...saved.options,reinforcement:true}},deck.cards);
+            await saveStudySession(deck.id,sessionKey,prepared);
+            setState(prepared);
+          }
+          setOptions({...saved.options,reinforcement:true});
         }
         setLoaded(true);
       })
@@ -627,6 +627,7 @@ function WaveLearnSession({
       });
   }, [deck.id]);
   const commit = async (next: WaveState) => {
+    next=prepareLearnChoices(next,deck.cards);
     setSaving(true);
     setError("");
     try {
@@ -647,6 +648,14 @@ function WaveLearnSession({
     lock.current = true;
     await commit(continueWave(state));
     lock.current = false;
+  };
+  const restartLearn = async (randomize=false) => {
+    if(saving || lock.current)return;
+    if(state && (state.introduced > state.wave.length || state.rounds > 0 || Object.values(state.mastery).some(v=>v!=="New")) && !window.confirm("Restart learning? This resets this Learn run, not your saved cards or review history."))return;
+    lock.current=true;
+    const fresh=beginLearn(randomize ? shuffle(deck.cards) : deck.cards,options);
+    if(await commit(randomize ? shuffleLearn(fresh) : fresh)){setResponse(null);setPhase(false);setUser("");setStarted(true);}
+    lock.current=false;
   };
   const dismissFeedback = () => {
     if (!response?.saved || saving || exitTimer.current) return;
@@ -717,13 +726,18 @@ function WaveLearnSession({
     return () => window.removeEventListener("keydown", key);
   }, [state, started, response, phase]);
   const question = response?.question || state?.queue[0],
-    card = response?.card || deck.cards.find((c) => c.id === question?.cardId);
+    card = response?.card || deck.cards.find((c) => c.id === (parseStructuredUnit(question?.cardId || "")?.[0] || question?.cardId));
+  const target = card?.structure ? structuredTargets(card.structure).find(t => t.id === parseStructuredUnit(question?.cardId || "")?.[1]) : undefined;
   const side = card && question ? sides(card, question.reverse) : null;
   const choices = useRef<string[]>([]),
     choiceKey = useRef("");
   const signature = question
     ? `${question.cardId}-${question.kind}-${state?.rounds}-${question.reverse}`
     : "";
+  const groupCache=useRef<{signature:string;targets:Target[]}>({signature:"",targets:[]});
+  if(groupCache.current.signature!==signature && card && state)groupCache.current={signature,targets:structuredLearnGroup(card,state)};
+  const group=response?.targets || groupCache.current.targets;
+  const structuredValues=group.length>1 ? structuredAnswers(response?.user ?? user) : target ? {[target.id]:response?.user ?? user} : {};
   useEffect(
     () => () => {
       window.dispatchEvent(new CustomEvent("flint-audio-play"));
@@ -734,14 +748,14 @@ function WaveLearnSession({
     const distractors = shuffle(
       deck.cards.filter(
         (c) =>
-          c.id !== card.id &&
+          c.id !== card.id && !c.structure &&
           (sides(c, question.reverse).answer.trim() ||
             sides(c, question.reverse).answerImage ||
             sides(c, question.reverse).answerAudio ||
             sides(c, question.reverse).answerVideo),
       ),
     ).slice(0, 3);
-    choices.current = shuffle([card.id, ...distractors.map((c) => c.id)]);
+    choices.current = question.choices || shuffle([card.id, ...distractors.map((c) => c.id)]);
     choiceKey.current = signature;
   }
   const answer = async (
@@ -769,18 +783,23 @@ function WaveLearnSession({
     )
       return;
     window.dispatchEvent(new CustomEvent("flint-audio-play"));
+    if(target && !didntKnow && group.some(t=>!structuredValues[t.id]?.trim()))return;
     lock.current = true;
+    const evidence=!didntKnow && question.kind==="typed" && visualRecall===undefined && options.confidence ? confidenceGrade(value,side.answer,options.grading==="strict",accents) : undefined;
+    const targetEvidence=target && !didntKnow && question.kind==="typed" && options.confidence ? Object.fromEntries(group.map(t=>[structuredUnitId(card.id,t.id),confidenceGrade(structuredValues[t.id]||"",t.answer,options.grading==="strict",accents)])) : {};
+    const targetResults=target ? Object.fromEntries(group.map(t=>[t.id,!didntKnow && (targetEvidence[structuredUnitId(card.id,t.id)] ? targetEvidence[structuredUnitId(card.id,t.id)].accuracy>=.7 : grade(structuredValues[t.id] || "",t.answer,options.grading,accents)!=="INCORRECT")])) : undefined;
     const result = didntKnow
       ? "DIDNT_KNOW"
       : visualRecall !== undefined
         ? visualRecall
           ? "CORRECT"
           : "INCORRECT"
+        : target ? Object.values(targetResults!).every(Boolean) ? "CORRECT" : "INCORRECT"
         : question.kind === "choice"
           ? selectedId === card.id
             ? "CORRECT"
             : "INCORRECT"
-          : grade(value, side.answer, options.grading, accents);
+          : evidence ? evidence.result==="strong_correct"?"CORRECT":evidence.result==="accepted"?"CLOSE":"INCORRECT" : grade(value, side.answer, options.grading, accents);
     const ok = result === "CORRECT" || result === "CLOSE";
     const display = {
       question,
@@ -790,18 +809,22 @@ function WaveLearnSession({
       selected: selectedId,
       result: result as "CORRECT" | "CLOSE" | "INCORRECT" | "DIDNT_KNOW",
       saved: false,
+      targets:target ? group : undefined,
+      targetResults,
     };
     setResponse(display);
     setFeedback(
       didntKnow
         ? "Didn't know — let's learn it"
-        : result === "CLOSE"
-          ? "Close enough"
+        : evidence?.result === "borderline" ? "Almost — we'll review this again"
+        : result === "CLOSE" || Object.values(targetEvidence).some(e=>e.needsReview) && ok
+          ? "Correct enough — we'll review this again"
           : ok
             ? "Correct"
             : "Not quite",
     );
-    if (await commit(answerLearn(state, didntKnow ? "DIDNT_KNOW" : ok))) {
+    const next=target ? answerLearnGroup(state,Object.fromEntries(group.map(t=>[structuredUnitId(card.id,t.id),didntKnow ? "DIDNT_KNOW" as const : !!targetResults?.[t.id]])),targetEvidence,Object.fromEntries(group.map(t=>[structuredUnitId(card.id,t.id),structuredValues[t.id]||""]))) : answerLearn(state, didntKnow ? "DIDNT_KNOW" : ok,value,evidence);
+    if (await commit(next)) {
       setResponse({ ...display, saved: true });
       try {
         await reviewNative(
@@ -836,7 +859,7 @@ function WaveLearnSession({
         response ||
         phase ||
         state?.checkpoint ||
-        question?.kind !== "choice"
+        question?.kind !== "choice" || !!card?.structure
       )
         return;
       const index = Number(e.key) - 1;
@@ -856,6 +879,7 @@ function WaveLearnSession({
       <div className="session-heading">
         <Back done={done} />
         <span>{deck.title} · Learn</span>
+        {state && <details className="learn-actions"><summary>Session actions</summary><button disabled={saving || !!response} onClick={()=>void restartLearn()}>Restart</button><button disabled={saving || !!response} onClick={()=>void commit(shuffleLearn(state))}>Shuffle</button><button disabled={saving || !!response} onClick={()=>void restartLearn(true)}>Restart &amp; Shuffle</button></details>}
       </div>
       {error && <p role="alert">{error}</p>}
       {!loaded ? (
@@ -863,21 +887,25 @@ function WaveLearnSession({
       ) : !started ? (
         <div className="learn-start">
           <p className="eyebrow">LEARN</p>
-          <h1>Memorize this set</h1>
+          <h1>{state ? "Continue learning?" : "Memorize this set"}</h1>
           <p>Recognize a few terms, then recall those same ideas.</p>
           <button
             className="primary"
             disabled={saving || !deck.cards.length}
             onClick={async () => {
-              if (state || (await commit(beginLearn(deck.cards, options))))
+              if (state || (await commit(beginLearn(readPreference("shuffle-new", false) ? shuffle(deck.cards) : deck.cards, options))))
                 setStarted(true);
             }}
           >
-            {state ? "Continue Learn" : "Start"}
+            {state ? "Resume" : "Start"}
           </button>
           {!state && (
             <details>
-              <summary>Options</summary>
+              <summary>Learn options</summary>
+              <fieldset><legend>Question types</legend>
+                <label><input type="checkbox" checked={options.choice!==false} disabled={options.typed===false} onChange={e=>{setOptions({...options,choice:e.target.checked});writePreference("learn-choice",e.target.checked);}}/>Multiple Choice</label>
+                <label><input type="checkbox" checked={options.typed!==false} disabled={options.choice===false} onChange={e=>{setOptions({...options,typed:e.target.checked});writePreference("learn-typed",e.target.checked);}}/>Typed Answer</label>
+              </fieldset>
               <label>
                 Wave size{" "}
                 <select
@@ -911,24 +939,28 @@ function WaveLearnSession({
                 Grading{" "}
                 <select
                   value={options.grading}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    writePreference("learn-strict",e.target.value === "strict");
                     setOptions({
                       ...options,
                       grading: e.target.value as LearnOptions["grading"],
-                    })
-                  }
+                    });
+                  }}
                 >
-                  <option value="normal">Normal</option>
-                  <option value="strict">Strict</option>
+                  <option value="normal">Flexible</option>
+                  <option value="strict">Word-for-word (strict)</option>
                   <option value="lenient">Lenient</option>
                 </select>
               </label>
+              <label><input type="checkbox" checked={options.confidence??false} disabled={options.grading==="strict"} onChange={e=>{writePreference("learn-confidence",e.target.checked);setOptions({...options,confidence:e.target.checked});}}/> Confidence grading</label>
+              <small>Accept sufficiently complete near-matches and revisit imperfect answers. Word-for-word remains strict.</small>
             </details>
           )}
         </div>
       ) : (
         state && (
           <>
+            {state.phase==="weak" && <p className="eyebrow">WEAK CARDS · Reinforcement {state.reinforcement?.section} of {state.reinforcement?.total}</p>}
             <div className="learn-progress">
               <span>Overall learning</span>
               <b>{learnProgress(state)}%</b>
@@ -938,7 +970,7 @@ function WaveLearnSession({
               />
             </div>
             <div className="wave-progress">
-              {(["choice", "typed"] as const).map((kind) => {
+              {(["choice", "typed"] as const).filter(kind=>state.options[kind]!==false).map((kind) => {
                 const completed =
                   state.wave.length -
                   state.queue.filter((q) => q.kind === kind).length;
@@ -1000,8 +1032,8 @@ function WaveLearnSession({
               </div>
             ) : state.checkpoint && !response ? (
               <div className="checkpoint">
-                <p className="eyebrow">CHECKPOINT</p>
-                <h1>Nice work</h1>
+                <p className="eyebrow">{state.phase==="weak" ? `WEAK CARDS · Reinforcement ${state.reinforcement?.section} of ${state.reinforcement?.total}` : "CHECKPOINT"}</p>
+                <h1>{state.phase==="learning" && state.introduced===state.ids.length && state.ids.some(id=>state.mistakes[id]>0 || state.reviewNeeded?.[id]) ? `Nice work — let's strengthen ${state.ids.filter(id=>state.mistakes[id]>0 || state.reviewNeeded?.[id]).length} targets.` : "Nice work"}</h1>
                 <p>
                   {state.wave.length} terms practiced ·{" "}
                   {
@@ -1026,7 +1058,8 @@ function WaveLearnSession({
               </div>
             ) : !question && !response ? (
               <div className="checkpoint">
-                <h1>Session complete</h1>
+                <h1>Learn complete</h1>
+                <p>{deck.cards.length} cards studied · {state.ids.filter(id=>state.mastery[id]==="Mastered").length} strong targets · {state.reinforcement?.ids.length || 0} reinforced</p>
                 <p>
                   {state.ids.every((id) => state.mastery[id] === "Mastered")
                     ? "Every term passed typed recall."
@@ -1055,7 +1088,10 @@ function WaveLearnSession({
                     {question.kind === "choice" ? "RECOGNIZE" : "RECALL"} · Wave{" "}
                     {state.rounds + 1}
                   </small>
-                  <h1>{side.prompt}</h1>
+                  {card.structure && target ? <>
+                    <StructuredView key={signature} value={card.structure} mode={question.kind === "choice" ? "choice" : "typed"} targetIds={group.map(t=>t.id)} answers={structuredValues} onAnswer={(id,value) => setUser(group.length>1 ? JSON.stringify({...structuredValues,[id]:value}) : value)} results={response?.targetResults} onSubmit={() => response ? dismissFeedback() : void answer(user)} />
+                  </> : <>
+                  <h1><MathText text={side.prompt}/></h1>
                   <StudyImage
                     name={side.image}
                     key={signature}
@@ -1091,7 +1127,8 @@ function WaveLearnSession({
                                 `Choose ${choice.answerVideo ? "video" : choice.answerAudio ? "audio" : "image"} answer ${choices.current.indexOf(id) + 1}`
                               }
                             >
-                              {choice.answer.trim() ||
+                              <kbd aria-hidden="true" className="choice-number">{choices.current.indexOf(id)+1}</kbd>
+                              {choice.answer.trim() ? <MathText text={choice.answer}/> :
                                 (!choice.answerImage
                                   ? choice.answerVideo
                                     ? "Select this video answer"
@@ -1116,6 +1153,7 @@ function WaveLearnSession({
                               />
                             </button>
                             <VideoPlayer
+                              mode="choice"
                               name={choice.answerVideo}
                               label="Choice video"
                             />
@@ -1146,12 +1184,6 @@ function WaveLearnSession({
                         value={user}
                         onValue={setUser}
                       />
-                      <button
-                        className="primary"
-                        disabled={saving || !!response || !user.trim()}
-                      >
-                        Check answer
-                      </button>
                     </form>
                   ) : (
                     <div>
@@ -1193,7 +1225,9 @@ function WaveLearnSession({
                       </details>
                     </div>
                   )}
+                  </>}
                   {!response && (
+                    <div className="learn-question-actions">
                     <button
                       className="secondary learn-skip"
                       disabled={saving}
@@ -1201,6 +1235,8 @@ function WaveLearnSession({
                     >
                       I don't know
                     </button>
+                    {(card.structure || (question.kind==="typed" && side.answer)) && <button className="primary" disabled={saving || (card.structure ? group.some(t=>!structuredValues[t.id]?.trim()) : !user.trim())} onClick={()=>void answer(user)}>{card.structure&&group.length>1?"Check answers":"Check answer"}</button>}
+                    </div>
                   )}
                   <DeferredLoading busy={saving} label="Saving progress" />
                   {response && (
@@ -1215,19 +1251,13 @@ function WaveLearnSession({
                       role="status"
                     >
                       <strong>
-                        <span className="feedback-icon" aria-hidden="true">
-                          {response.result === "DIDNT_KNOW"
-                            ? "↻"
-                            : response.result === "INCORRECT"
-                              ? "✕"
-                              : "✓"}
-                        </span>
+                        <AnswerMark correct={response.result!=="DIDNT_KNOW"&&response.result!=="INCORRECT"}/>
                         {feedback}
                       </strong>
-                      {response.result === "CLOSE" && (
+                      {!card.structure && response.result === "CLOSE" && (
                         <CanonicalAnswer answer={side.answer} />
                       )}
-                      {response.result === "DIDNT_KNOW" && (
+                      {!card.structure && response.result === "DIDNT_KNOW" && (
                         <>
                           <CanonicalAnswer answer={side.answer} />
                           <StudyImage
@@ -1243,7 +1273,7 @@ function WaveLearnSession({
                           </p>
                         </>
                       )}
-                      {response.result === "INCORRECT" && (
+                      {!card.structure && response.result === "INCORRECT" && (
                         <>
                           <p>Your answer: {response.user || "Image choice"}</p>
                           <div className="expected-answer">
@@ -1255,7 +1285,7 @@ function WaveLearnSession({
                               alt="Correct answer visual"
                             />
                           </div>
-                          <small>You'll see this one again.</small>
+                          <small>{state.phase==="weak" && state.reinforcement?.section===state.reinforcement?.total ? "This target still needs practice." : "You'll see this one again."}</small>
                         </>
                       )}
                       {(response.result === "CORRECT" ||
@@ -1297,21 +1327,7 @@ export function WaveLearn(props: { deck: Deck; done: () => void }) {
       mode="Learn"
       deck={{
         ...props.deck,
-        cards: props.deck.cards.filter(
-          (c) =>
-            !!(
-              c.question.trim() ||
-              c.questionImage ||
-              c.questionAudio ||
-              c.questionVideo
-            ) &&
-            !!(
-              c.answer.trim() ||
-              c.answerImage ||
-              c.answerAudio ||
-              c.answerVideo
-            ),
-        ),
+        cards: props.deck.cards.filter(isValidCardDraft),
       }}
     >
       {(deck, accents) => (

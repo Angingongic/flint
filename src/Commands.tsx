@@ -60,7 +60,7 @@ export function ShortcutHelp({ onClose }: { onClose: () => void }) {
         {[
           [mod + "+K", "Command palette"],
           [mod + "+N", "New set"],
-          ["/", "Focus search"],
+          ["/", "Open search"],
           ["Esc", "Close, cancel or back"],
           [mod + "+Enter", "Add card in editor"],
           [mod + "+S", "Save set"],

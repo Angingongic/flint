@@ -131,6 +131,51 @@ it("never autoplays Test-style players and stops the previous player", async () 
   view.unmount();
   expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
 });
+it("provides visible video controls and isolates player keyboard shortcuts", async () => {
+  const parentKey = vi.fn();
+  const view = render(<div onKeyDown={parentKey}><VideoPlayer src="clip.mp4" label="Clip"/></div>);
+  const el = view.container.querySelector("video")!;
+  await waitFor(()=>expect(el.getAttribute("src")).toBe("clip.mp4"));
+  Object.defineProperty(el,"duration",{configurable:true,value:24});
+  fireEvent.loadedMetadata(el);
+  expect(screen.getByText("0:00 / 0:24")).toBeTruthy();
+  fireEvent.change(screen.getByRole("slider",{name:"Video progress"}),{target:{value:"8"}});
+  expect(el.currentTime).toBe(8);
+  fireEvent.keyDown(screen.getByRole("group",{name:"Clip player"}),{key:"ArrowRight"});
+  expect(el.currentTime).toBe(13);
+  fireEvent.keyDown(screen.getByRole("group",{name:"Clip player"}),{key:" "});
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
+  expect(parentKey).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button",{name:"Mute video"}));
+  expect(el.muted).toBe(true);
+  fireEvent.change(screen.getByRole("slider",{name:"Video volume"}),{target:{value:"0.5"}});
+  expect(el.volume).toBe(0.5);
+  expect(el.muted).toBe(false);
+  const request = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(screen.getByRole("group",{name:"Clip player"}),"requestFullscreen",{value:request});
+  fireEvent.click(screen.getByRole("button",{name:"Video fullscreen"}));
+  expect(request).toHaveBeenCalledOnce();
+  expect(el.currentTime).toBe(13);
+});
+it("uses one source-ratio viewport and scrubs the full pointer track",async()=>{
+ const view=render(<VideoPlayer src="clip.mp4" label="Seek clip"/>),video=view.container.querySelector("video")!;
+ await waitFor(()=>expect(video.getAttribute("src")).toBe("clip.mp4"));
+ Object.defineProperties(video,{duration:{configurable:true,value:100},videoWidth:{configurable:true,value:900},videoHeight:{configurable:true,value:1600}});
+ fireEvent.loadedMetadata(video);
+ expect((video.parentElement as HTMLElement).style.aspectRatio).toBe("900 / 1600");
+ expect(video.parentElement?.querySelector(".video-center-play")).toBeTruthy();
+ expect(video.parentElement?.querySelector(".video-controls")).toBeNull();
+ const slider=screen.getByRole("slider",{name:"Video progress"});let captured=false;
+ slider.setPointerCapture=()=>{captured=true;};slider.hasPointerCapture=()=>captured;slider.releasePointerCapture=()=>{captured=false;};
+ vi.spyOn(slider,"getBoundingClientRect").mockReturnValue({left:100,width:200} as DOMRect);
+ const pointer=(type:string,x:number)=>{const e=new MouseEvent(type,{bubbles:true,clientX:x});Object.defineProperty(e,"pointerId",{value:1});fireEvent(slider,e);};
+ pointer("pointerdown",200);expect(video.currentTime).toBe(50);
+ pointer("pointermove",260);expect(video.currentTime).toBe(80);
+ pointer("pointermove",90);expect(video.currentTime).toBe(0);
+ pointer("pointermove",310);expect(video.currentTime).toBe(100);
+ pointer("pointerup",310);pointer("pointermove",200);expect(video.currentTime).toBe(100);
+ expect(screen.getByText("1:40 / 1:40")).toBeTruthy();
+});
 it("resets an old video side and does not play hidden media", async () => {
   const view = render(<VideoPlayer name="v.mp4" autoplay />);
   await waitFor(() =>

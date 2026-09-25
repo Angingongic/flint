@@ -1,7 +1,7 @@
 {
   "name": "flint",
   "private": true,
-  "version": "0.1.8",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,6 +23,7 @@
     "@tauri-apps/plugin-process": "^2.3.0",
     "@tauri-apps/plugin-updater": "^2.9.0",
     "lucide-react": "^0.468.0",
+    "nerdamer": "1.1.13",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { Card, Deck } from "./lib";
+import { restoreLegacyLibrary } from "./lib";
 import { normalizeCover } from "./covers";
 import { trashVictims } from "./editing";
 export const inTauri = () =>
@@ -44,10 +45,16 @@ export async function exportFlint(deck: Deck) {
 }
 export async function loadNativeDecks() {
   if (!inTauri()) return null;
+  const restored=await invoke<string|null>("restored_preferences");
+  if(restored){const prefs=JSON.parse(restored);for(const [key,value] of Object.entries(prefs))if(key.startsWith("flint-")&&typeof value==="string")localStorage.setItem(key,value);await invoke("acknowledge_restored_preferences");window.location.reload();return null;}
+  await syncDraftMedia();
+  // A fresh app launch has no live editor Undo stack. Retired attachments can
+  // now be reclaimed, but saved drafts, Trash and shared references still win.
+  await invoke("cleanup_retired_media");
   await invoke("cleanup_trash");
   const decks = await invoke<Deck[]>("list_decks");
   return decks.map((d) => ({
-    ...normalizeCover(d),
+    ...normalizeCover(restoreLegacyLibrary(d)),
     cards: d.cards.map((c) => ({
       ...c,
       due: new Date(c.dueAt || 0) <= new Date(),
@@ -76,7 +83,15 @@ export async function pruneTrash(decks: Deck[]) {
   return decks.filter((d) => !removed.includes(d.id));
 }
 export async function permanentlyRemoveDeck(id: string) {
-  if (inTauri()) await invoke("permanently_remove", { id });
+  if (inTauri()) {await syncDraftMedia();await invoke("permanently_remove", { id });}
+}
+export async function syncDraftMedia() {
+  if(!inTauri())return;
+  const names:string[]=[];
+  const collect=(value:unknown)=>{if(typeof value==="string")names.push(value);else if(value && typeof value==="object")Object.values(value).forEach(collect);};
+  // Fail closed: corrupt draft storage must not silently lose its protection.
+  collect(JSON.parse(localStorage.getItem("flint-create-draft") || "null"));
+  await invoke("sync_draft_media",{names});
 }
 export async function saveNativeDeck(deck: Deck, source?: string) {
   if (!inTauri()) return;
@@ -146,10 +161,11 @@ export async function extractDocument(path: string) {
   return invoke<string>("extract_document", { path });
 }
 export async function createBackup(path: string) {
-  return invoke("create_backup", { path });
+  const preferences=JSON.stringify(Object.fromEntries(Object.keys(localStorage).filter(k=>k.startsWith("flint-") && k!=="flint-decks").map(k=>[k,localStorage.getItem(k)])));
+  return invoke("create_backup", { path,preferences });
 }
-export async function restoreBackup(path: string) {
-  return invoke("restore_backup", { path });
+export async function restoreBackup(token: string) {
+  return invoke("queue_backup_restore", { token });
 }
 export async function importMedia(path: string) {
   return invoke<string>("import_media", { path });
@@ -258,17 +274,45 @@ export async function saveVideoBytes(file: File) {
     file.size > 25 * 1024 * 1024
   )
     throw Error("Choose MP4 or WebM video up to 25 MB.");
-  if (inTauri())
-    return invoke<string>("save_video_bytes", {
+  if (inTauri()) {
+    const name = await invoke<string>("save_video_bytes", {
       data: Array.from(new Uint8Array(await file.arrayBuffer())),
       extension,
     });
+    // Poster failure is non-fatal: unsupported codecs keep a normal Play control.
+    try {
+      const { createVideoPoster } = await import("./video-poster");
+      const poster = await createVideoPoster(file);
+      if (poster) await invoke("save_video_poster", { name, data: Array.from(new Uint8Array(await poster.arrayBuffer())) });
+    } catch { /* The lossless original remains usable even if thumbnail generation fails. */ }
+    return name;
+  }
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+const pendingPosters = new Map<string,Promise<string>>();
+const unavailablePosters = new Set<string>();
+export async function videoPosterUrl(name?: string | null) {
+  if (!name || !inTauri()) return "";
+  const poster = await invoke<string | null>("video_poster", { name });
+  if(poster) return mediaUrl(poster);
+  if(unavailablePosters.has(name)) return "";
+  if(!pendingPosters.has(name))pendingPosters.set(name,(async()=>{
+    try{
+      const {createVideoPoster}=await import("./video-poster");
+      const frame=await createVideoPoster(await mediaUrl(name));
+      if(!frame){unavailablePosters.add(name);return "";}
+      await invoke("save_video_poster",{name,data:Array.from(new Uint8Array(await frame.arrayBuffer()))});
+      const saved=await invoke<string|null>("video_poster",{name});
+      return saved?mediaUrl(saved):"";
+    }catch{unavailablePosters.add(name);return "";}
+    finally{pendingPosters.delete(name);}
+  })());
+  return pendingPosters.get(name)!;
 }
 export async function relocateLibraryFolder(
   source: string,

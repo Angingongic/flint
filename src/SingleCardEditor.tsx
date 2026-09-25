@@ -1,4 +1,7 @@
+import { SmartMathTextarea } from "./SmartMathField";
+import { mathSuggestion } from "./math-autofill";
 import { VideoField } from "./Video";
+import { StructuredEditor } from "./StructuredEditor";
 import { useState } from "react";
 import { Modal } from "./ui";
 import { isValidCardDraft, type Card } from "./lib";
@@ -10,6 +13,7 @@ import {
 } from "./ImageField";
 import { AudioField } from "./Audio";
 import { InsertMedia } from "./InsertMedia";
+import { Undo2, Redo2 } from "lucide-react";
 export function SingleCardEditor({
   card,
   starred,
@@ -38,6 +42,7 @@ export function SingleCardEditor({
       <div
         onKeyDown={(e) => {
           if (
+            !draft.structure &&
             (e.ctrlKey || e.metaKey) &&
             (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y")
           ) {
@@ -48,12 +53,12 @@ export function SingleCardEditor({
           }
         }}
       >
-        <button disabled={!canUndo || busy} onClick={undo}>
-          Undo card edit
+        {!draft.structure && <><button className="icon" title="Undo card edit" aria-label="Undo card edit" disabled={!canUndo || busy} onClick={undo}>
+          <Undo2 size={18}/>
         </button>
-        <button disabled={!canRedo || busy} onClick={redo}>
-          Redo card edit
-        </button>
+        <button className="icon" title="Redo card edit" aria-label="Redo card edit" disabled={!canRedo || busy} onClick={redo}>
+          <Redo2 size={18}/>
+        </button></>}
         <button
           aria-label="Star editor card"
           aria-pressed={draft.starred}
@@ -61,6 +66,7 @@ export function SingleCardEditor({
         >
           {draft.starred ? "★" : "☆"}
         </button>
+        <StructuredEditor lockType={!!card.structure} value={draft.structure} onChange={structure => setDraft(old => ({ ...old, structure }))}>
         <div className="edit-card-sides">
           <button
             className="side-swap icon"
@@ -75,8 +81,10 @@ export function SingleCardEditor({
               <ImageDestination>
                 <label>
                   {side === "question" ? "Front" : "Back"}
-                  <textarea
+                  <SmartMathTextarea
                     value={draft[side]}
+                    suggestion={side === "answer" && !draft.answer ? mathSuggestion(draft.question) : null}
+                    onAcceptSuggestion={answer => setDraft(old => old.answer ? old : {...old,answer})}
                     onChange={(e) =>
                       setDraft((old) => ({ ...old, [side]: e.target.value }))
                     }
@@ -133,6 +141,7 @@ export function SingleCardEditor({
             </section>
           ))}
         </div>
+        </StructuredEditor>
         {error && <p role="alert">{error}</p>}
         <div className="modal-actions">
           <button disabled={busy} onClick={close}>

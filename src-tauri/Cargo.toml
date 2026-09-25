@@ -1,6 +1,6 @@
 [package]
 name = "flint"
-version = "0.1.8"
+version = "2.0.0"
 description = "Fast, private, offline-first studying"
 authors = ["Flint"]
 edition = "2021"
@@ -26,7 +26,5 @@ chrono = { version = "0.4", features = ["serde"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-extract = "0.7"
 quick-xml = "0.37"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
-
-[dev-dependencies]
 tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }

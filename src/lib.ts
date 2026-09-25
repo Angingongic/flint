@@ -1,4 +1,7 @@
+import { validStructure, type StructuredCard } from "./structured";
+import { hasMath, canonicalMath } from "./math";
 export type Card = {
+  structure?: StructuredCard | null;
   id: string;
   question: string;
   answer: string;
@@ -35,12 +38,18 @@ export type Deck = {
     description?: string;
     folder?: string;
     tags?: string[];
-    archived?: boolean;
     deletedAt?: string | null;
     starredCards?: string[];
     pinned?: boolean;
   };
 };
+/** Compatibility only: retiring Archive must never hide or delete old content. */
+export function restoreLegacyLibrary(deck: Deck): Deck {
+  if (!deck.meta || !("archived" in deck.meta)) return deck;
+  const meta = { ...deck.meta } as Record<string,unknown>;
+  delete meta.archived;
+  return { ...deck, meta };
+}
 export const uid = () => crypto.randomUUID();
 export const newCard = (
   question: string,
@@ -65,6 +74,7 @@ export const newCard = (
   answerImage: null,
 });
 export type CardDraft = {
+  structure?: StructuredCard | null;
   questionVideo?: string | null;
   answerVideo?: string | null;
   question?: string;
@@ -75,6 +85,7 @@ export type CardDraft = {
   answerAudio?: string | null;
 };
 export function isValidCardDraft(card: CardDraft) {
+  if (card.structure) return validStructure(card.structure);
   return (
     (!!card.question?.trim() ||
       !!card.questionImage ||
@@ -85,6 +96,22 @@ export function isValidCardDraft(card: CardDraft) {
       !!card.answerAudio ||
       !!card.answerVideo)
   );
+}
+export function cardIssues(card: CardDraft): string[] {
+  const value=card.structure;
+  if(value?.type === "occlusion") {
+    const issues:string[]=[];
+    if(!value.image)issues.push("Add an image");
+    if(!value.regions.length)issues.push("Add at least one region");
+    value.regions.forEach((r,i)=>{if(!r.answer.trim())issues.push(`Region ${i+1} needs an answer`);});
+    if(!issues.length && !validStructure(value))issues.push("Fix invalid region geometry");
+    return issues;
+  }
+  if(value) return validStructure(value)?[]:["Add table knowledge with identifying row context"];
+  const issues:string[]=[];
+  if(!(card.question?.trim() || card.questionImage || card.questionAudio || card.questionVideo))issues.push("Front cannot be empty");
+  if(!(card.answer?.trim() || card.answerImage || card.answerAudio || card.answerVideo))issues.push("Back cannot be empty");
+  return issues;
 }
 export function canCreateDeck(title: string, cards: CardDraft[]) {
   return !!title.trim() && cards.some(isValidCardDraft);
@@ -162,6 +189,7 @@ export function gradeAnswer(
   accents = ignoreAccents(),
 ): Grade {
   if (!input.trim() || !expected.trim()) return "INCORRECT";
+  if (hasMath(input) || hasMath(expected)) return canonicalMath(input) === canonicalMath(expected) ? "CORRECT" : "INCORRECT";
   const clean = (s: string) =>
     s.normalize("NFC").replace(/[-–—]/g, " ").replace(/\s+/g, " ").trim();
   const a =

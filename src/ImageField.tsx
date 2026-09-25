@@ -4,6 +4,8 @@ import { ImageCrop } from "./ImageCrop";
 import { notify, motion, useReducedMotion } from "./motion";
 import { CoverPicker, presetFor } from "./covers";
 import type { Deck } from "./lib";
+import { ReplaceImageDialog } from "./ReplaceImageDialog";
+import { SelectableImage } from "./SelectableImage";
 export function ManagedImage({
   name,
   alt,
@@ -13,9 +15,12 @@ export function ManagedImage({
 }) {
   const [src, setSrc] = useState("");
   useEffect(() => {
+    let active=true;
+    setSrc("");
     mediaUrl(name)
-      .then(setSrc)
-      .catch(() => setSrc(""));
+      .then(url=>{if(active)setSrc(url);})
+      .catch(() => {if(active)setSrc("");});
+    return ()=>{active=false;};
   }, [name]);
   return src ? <img className="study-image" src={src} alt={alt} /> : null;
 }
@@ -32,6 +37,7 @@ export function ImageField({
   const input = useRef<HTMLInputElement>(null),
     target = useRef<HTMLDivElement>(null);
   const [crop, setCrop] = useState(false);
+  const [replacement, setReplacement] = useState<File | null>(null);
   const reduced = useReducedMotion();
   const removalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -45,7 +51,7 @@ export function ImageField({
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [large, setLarge] = useState(false);
-  const process = async (file: File) => {
+  const process = async (file: File, confirmed = false) => {
     setError("");
     if (
       !/^image\/(png|jpeg|webp|gif)$/.test(file.type) ||
@@ -54,6 +60,7 @@ export function ImageField({
       setError("Choose a PNG, JPEG, WebP or GIF image under 25 MB.");
       return;
     }
+    if (value && !confirmed) { setReplacement(file); return false; }
     setBusy(true);
     try {
       if (inTauri()) onChange(await saveMediaBytes(file));
@@ -103,6 +110,7 @@ export function ImageField({
         }
       }}
     >
+      {replacement && <ReplaceImageDialog onCancel={()=>setReplacement(null)} onReplace={()=>{const file=replacement;setReplacement(null);void process(file,true);}}/>}
       {crop &&
         value &&
         !(/\.gif$/i.test(value) || value.startsWith("data:image/gif")) && (
@@ -110,7 +118,7 @@ export function ImageField({
             name={value}
             onClose={() => setCrop(false)}
             onApply={async (file) => {
-              if (!(await process(file))) throw Error("Image save failed");
+              if (!(await process(file,true))) throw Error("Image save failed");
             }}
           />
         )}
@@ -124,7 +132,7 @@ export function ImageField({
           e.target.value = "";
         }}
       />
-      {(value || removedPreview) && (
+      {value ? <SelectableImage name={value} label={label} onRemove={()=>onChange(null)}><ManagedImage name={value} alt={label}/></SelectableImage> : removedPreview && (
         <button
           className={"attachment-thumb" + (removing ? " removing" : "")}
           onClick={() => setLarge(true)}
@@ -193,6 +201,7 @@ export function ImageField({
           role="dialog"
           aria-modal="true"
           aria-label={label}
+          onClick={event=>{if(event.target===event.currentTarget)setLarge(false);}}
           onKeyDown={(e) => {
             if (e.key === "Escape") setLarge(false);
           }}
@@ -202,7 +211,7 @@ export function ImageField({
             className="secondary"
             onClick={() => setLarge(false)}
           >
-            Close preview
+            <span aria-hidden="true">×</span><span className="sr-only">Close preview</span>
           </button>
           <ManagedImage name={value} alt={label} />
         </div>
@@ -243,6 +252,12 @@ export function ImageDestination({
         e.currentTarget
           .querySelector(".attachment")
           ?.dispatchEvent(new CustomEvent("flint-image", { detail: file }));
+      }}
+      onPasteCapture={(e) => {
+        const file=Array.from(e.clipboardData.files || []).find(file=>/^image\/(png|jpeg|webp|gif)$/.test(file.type));
+        if(!file)return;
+        e.preventDefault();e.stopPropagation();
+        e.currentTarget.querySelector(".attachment")?.dispatchEvent(new CustomEvent("flint-image",{detail:file}));
       }}
     >
       {children}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Modal } from "./ui";
 import { AudioPlayer, audioTime } from "./Audio";
 import { saveAudioBytes } from "./native";
+import { useMicrophone } from "./microphone";
 export function AudioRecorder({
   onUse,
   close,
@@ -9,6 +10,7 @@ export function AudioRecorder({
   onUse: (name: string) => void;
   close: () => void;
 }) {
+  const microphone=useMicrophone();
   const recorder = useRef<MediaRecorder | null>(null),
     stream = useRef<MediaStream | null>(null),
     live = useRef(true),
@@ -16,6 +18,7 @@ export function AudioRecorder({
     chunks = useRef<Blob[]>([]),
     blob = useRef<Blob | null>(null);
   const [recording, setRecording] = useState(false),
+    [paused,setPaused]=useState(false),
     [seconds, setSeconds] = useState(0),
     [url, setUrl] = useState(""),
     [error, setError] = useState(""),
@@ -23,12 +26,13 @@ export function AudioRecorder({
   const stopTracks = () => {
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
+    microphone.stop();
   };
   useEffect(() => {
     live.current = true;
     return () => {
       live.current = false;
-      if (recorder.current?.state === "recording") recorder.current.stop();
+      if (recorder.current && recorder.current.state !== "inactive") recorder.current.stop();
       stopTracks();
     };
   }, []);
@@ -39,10 +43,10 @@ export function AudioRecorder({
     [url],
   );
   useEffect(() => {
-    if (!recording) return;
+    if (!recording || paused) return;
     const t = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(t);
-  }, [recording]);
+  }, [recording,paused]);
   const start = async () => {
     setError("");
     setBusy(true);
@@ -57,7 +61,7 @@ export function AudioRecorder({
         throw Error(
           "Recording is unavailable on this device. Import an audio file instead.",
         );
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mic = await microphone.acquire();
       if (!live.current) {
         mic.getTracks().forEach((t) => t.stop());
         return;
@@ -74,6 +78,7 @@ export function AudioRecorder({
         );
       const r = new MediaRecorder(mic, { mimeType: mime });
       recorder.current = r;
+      mic.getTracks().forEach(track=>track.addEventListener?.("ended",()=>{if(r.state!=="inactive")r.stop();}));
       let bytes = 0;
       r.ondataavailable = (e) => {
         if (e.data.size) {
@@ -97,6 +102,7 @@ export function AudioRecorder({
         setRecording(false);
       };
       r.start(250);
+      setPaused(false);
       setSeconds(0);
       setRecording(true);
     } catch (e) {
@@ -118,9 +124,16 @@ export function AudioRecorder({
         if (!saving.current) close();
       }}
     >
+      <label>Microphone<select aria-label="Microphone" value={microphone.selected} disabled={recording || busy || microphone.busy} onChange={e=>microphone.select(e.target.value)}>
+        <option value="">System default</option>{microphone.devices.map((device,index)=><option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${index+1}`}</option>)}
+      </select></label>
+      {!recording && <div className="recorder-tools"><button disabled={busy || microphone.busy} onClick={()=>void microphone.scan()}>Rescan microphones</button><button disabled={busy || microphone.busy} onClick={()=>microphone.active?microphone.stop():void microphone.acquire().catch(()=>{})}>{microphone.active?"Stop monitoring":"Enable microphone"}</button></div>}
+      <div className="microphone-meter" role="meter" aria-label="Microphone input level" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(microphone.meter.level*100)} aria-valuetext={microphone.meter.label}><span style={{transform:`scaleX(${microphone.meter.level})`}}/></div>
+      <small>{microphone.meter.label}</small>
+      {microphone.error && microphone.error!==error && <p role="alert">{microphone.error}</p>}
       <p aria-live="polite">
         {recording
-          ? "● Recording " + audioTime(seconds)
+          ? (paused?"Paused ":"● Recording ") + audioTime(seconds)
           : url
             ? "Preview your recording"
             : "Record locally. Nothing is uploaded."}
@@ -132,9 +145,9 @@ export function AudioRecorder({
           Cancel
         </button>
         {recording ? (
-          <button onClick={() => recorder.current?.stop()}>Stop</button>
+          <><button onClick={()=>{const r=recorder.current;if(!r)return;if(r.state==="recording"){r.pause();setPaused(true);}else if(r.state==="paused"){r.resume();setPaused(false);}}}>{paused?"Resume":"Pause"}</button><button onClick={() => recorder.current?.stop()}>Stop</button></>
         ) : (
-          <button disabled={busy} onClick={() => void start()}>
+          <button disabled={busy || microphone.busy} onClick={() => void start()}>
             {url ? "Re-record" : "Start recording"}
           </button>
         )}

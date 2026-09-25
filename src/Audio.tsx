@@ -1,4 +1,5 @@
 import { AudioRecorder } from "./AudioRecorder";
+import { usePreference } from "./preferences";
 import { useEffect, useRef, useState } from "react";
 import { Play, Pause, RotateCcw, Volume2, Upload, Trash2 } from "lucide-react";
 import { mediaUrl, saveAudioBytes } from "./native";
@@ -20,6 +21,7 @@ export function AudioPlayer({
   active?: boolean;
   autoplay?: boolean;
 }) {
+  const [allowAutoplay]=usePreference<boolean>("audio-autoplay",true);
   const audio = useRef<HTMLAudioElement>(null),
     identity = useRef({});
   const [src, setSrc] = useState(""),
@@ -71,7 +73,7 @@ export function AudioPlayer({
   }, [active]);
   useEffect(() => {
     const el = audio.current;
-    if (active && autoplay && src) void el?.play().catch(() => {});
+    if (active && autoplay && allowAutoplay && src) void el?.play().catch(() => {});
     const observer =
       el && typeof IntersectionObserver !== "undefined"
         ? new IntersectionObserver((entries) => {
@@ -83,7 +85,14 @@ export function AudioPlayer({
         : null;
     if (el?.parentElement) observer?.observe(el.parentElement);
     return () => observer?.disconnect();
-  }, [active, autoplay, src]);
+  }, [active, autoplay, allowAutoplay, src]);
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0;
+    const tick = () => { if (audio.current) setTime(audio.current.currentTime); frame = requestAnimationFrame(tick); };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing,src]);
   if (!name && !provided) return null;
   const play = async () => {
     if (!active || !audio.current) return;
@@ -109,7 +118,8 @@ export function AudioPlayer({
         ref={audio}
         src={src || undefined}
         preload="metadata"
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onLoadedMetadata={(e) => setDuration(Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0 ? e.currentTarget.duration : 0)}
+        onDurationChange={(e) => setDuration(Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0 ? e.currentTarget.duration : 0)}
         onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
         onPlay={(e) => {
           if (!active) {
@@ -158,7 +168,7 @@ export function AudioPlayer({
           max={Number.isFinite(duration) ? duration : 0}
           step={0.1}
           value={time}
-          disabled={!duration || !active}
+          disabled={!Number.isFinite(duration) || duration <= 0 || !active}
           onChange={(e) => {
             if (audio.current) {
               audio.current.currentTime = +e.target.value;
@@ -167,7 +177,7 @@ export function AudioPlayer({
           }}
         />
         <small>
-          {audioTime(time)} / {audioTime(duration)}
+          {audioTime(Math.max(0,time))} / {duration > 0 && Number.isFinite(duration) ? audioTime(duration) : "--:--"}
         </small>
       </div>
       <button

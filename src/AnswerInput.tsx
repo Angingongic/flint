@@ -1,5 +1,7 @@
 import { useRef, type InputHTMLAttributes } from "react";
 import type { Card } from "./lib";
+import { SmartMathInput } from "./SmartMathField";
+import { MathText } from "./MathText";
 
 export function sessionCharacters(cards: Card[]): string[] {
   return [
@@ -25,7 +27,7 @@ export function AnswerInput({
   const chars = sessionCharacters(cards);
   return (
     <div className="answer-input">
-      <input
+      <SmartMathInput
         {...props}
         ref={input}
         value={value}
@@ -74,7 +76,7 @@ export function AnswerInput({
 export function CanonicalAnswer({ answer }: { answer: string }) {
   return (
     <p className="expected-answer">
-      Correct answer: <mark>{answer}</mark>
+      Correct answer: <mark><MathText text={answer}/></mark>
     </p>
   );
 }

@@ -1,3 +1,4 @@
+import { MathText } from "./MathText";
 import { useReorderMotion } from "./reorder-motion";
 import { usePointerDrag } from "./pointer-drag";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -177,7 +178,7 @@ export function Matching({
               <small className="match-number" aria-label={`Row ${index + 1}`}>
                 {index + 1}
               </small>
-              <span>{item.text}</span>
+              <MathText text={item.text}/>
               <StudyImage
                 name={item.image}
                 audio={item.audio}
@@ -220,7 +221,7 @@ export function Matching({
                     <GripVertical size={18} />
                   </button>
                   <div>
-                    <span>{answer.text}</span>
+                    <MathText text={answer.text}/>
                     <StudyImage
                       name={answer.image}
                       audio={answer.audio}
@@ -237,7 +238,7 @@ export function Matching({
                     <>
                       <p>
                         Correct answer:{" "}
-                        {right.find((r) => r.id === item.id)?.text || "Image"}
+                        <MathText text={right.find((r) => r.id === item.id)?.text || "Image"}/>
                       </p>
                       <StudyImage
                         name={right.find((r) => r.id === item.id)?.image}

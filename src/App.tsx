@@ -1,3 +1,11 @@
+import { SmartMathTextarea } from "./SmartMathField";
+import { AccessibilityPreferences, EditorPreferences, StudyPreferences } from "./EditorPreferences";
+import { usePreference, writePreference } from "./preferences";
+import { Welcome20 } from "./Welcome20";
+import { mathSuggestion } from "./math-autofill";
+import { StructuredEditor } from "./StructuredEditor";
+import { restoreLegacyLibrary } from "./lib";
+import type { StructuredCard } from "./structured";
 import { relocateFolder, folderName } from "./folders";
 import { relocateLibraryFolder } from "./native";
 import { VideoField } from "./Video";
@@ -58,7 +66,6 @@ import {
   BarChart3,
   Settings,
   Search,
-  Command,
   Flame,
   Clock3,
   Target,
@@ -87,6 +94,7 @@ import {
   dueCards,
   canCreateDeck,
   isValidCardDraft,
+  cardIssues,
 } from "./lib";
 import {
   loadNativeDecks,
@@ -105,6 +113,10 @@ import {
 } from "./native";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { UpdateProvider, UpdateSettings } from "./Updates";
+import { StorageMaintenance } from "./StorageMaintenance";
+import { Modal } from "./ui";
+import { invoke } from "@tauri-apps/api/core";
+import { syncDraftMedia } from "./native";
 import { getVersion } from "@tauri-apps/api/app";
 import { displayVersion } from "./version";
 type Page =
@@ -131,12 +143,19 @@ const load = () => {
       JSON.parse(localStorage.getItem("flint-decks") || "null") || [];
     return decks
       .filter((deck) => !["bio", "history", "spanish"].includes(deck.id))
-      .map(normalizeCover);
+      .map(restoreLegacyLibrary).map(normalizeCover);
   } catch {
     return [];
   }
 };
 export function App() {
+  const [studySize]=usePreference<number>("study-size",100),[highContrast]=usePreference<boolean>("high-contrast",false),[reducedMotion]=usePreference<boolean>("reduced-motion",false);
+  useEffect(()=>{
+    document.documentElement.style.setProperty("--study-text-scale",String(Math.max(100,Math.min(130,studySize))/100));
+    document.documentElement.dataset.highContrast=String(highContrast);
+    document.documentElement.dataset.reducedMotion=String(reducedMotion);
+  },[studySize,highContrast,reducedMotion]);
+  const [upgradedTo20,setUpgradedTo20]=useState(false);
   const [newSetFolder, setNewSetFolder] = useState<string | undefined>(
     undefined,
   );
@@ -145,15 +164,20 @@ export function App() {
     [shortcutHelp, setShortcutHelp] = useState(false);
   const [page, setPage] = useState<Page>("Home");
   const [decks, setDecks] = useState<Deck[]>(load);
-  const [dark, setDark] = useState(
+  const [dark, setDarkState] = useState(
     localStorage.getItem("flint-theme") !== "light",
   );
+  const [themeMode]=usePreference<string>("theme-mode","manual");
+  const setDark=(next:boolean)=>{writePreference("theme-mode","manual");setDarkState(next);};
+  useEffect(()=>{
+    if(themeMode!=="system" || typeof matchMedia!=="function")return;
+    const media=matchMedia("(prefers-color-scheme: dark)");const update=()=>setDarkState(media.matches);
+    update();media.addEventListener("change",update);return()=>media.removeEventListener("change",update);
+  },[themeMode]);
   const [studyDeck, setStudyDeck] = useState<Deck | null>(null);
   const [studyMode, setStudyMode] = useState<StudyMode | null>(null);
   const [practiceDeck, setPracticeDeck] = useState<Deck | null>(null);
   const [editingDeck, setEditingDeck] = useState<Deck | null>(null);
-  const [query, setQuery] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
   const [displayName, setDisplayName] = useState(
     localStorage.getItem("flint-display-name") || "",
   );
@@ -219,7 +243,14 @@ export function App() {
   useEffect(() => {
     loadNativeDecks()
       .then((native) => {
-        if (native) setDecks(native);
+        if (native) {
+          const previous=localStorage.getItem("flint-last-version");
+          const upgraded=previous ? Number(previous.split(".")[0]) < 2 : native.length > 0;
+          if(upgraded && localStorage.getItem("flint-welcome-2")!=="viewed")localStorage.setItem("flint-welcome-2-pending","true");
+          setUpgradedTo20(localStorage.getItem("flint-welcome-2-pending")==="true");
+          localStorage.setItem("flint-last-version","2.0.0");
+          setDecks(native);
+        }
       })
       .catch((error) =>
         setAppError(`Flint couldn't open your library: ${String(error)}`),
@@ -261,8 +292,7 @@ export function App() {
         go("Create");
       } else if (event.key === "/") {
         event.preventDefault();
-        go("Library");
-        requestAnimationFrame(() => searchRef.current?.focus());
+        setCommands(true);
       } else if (event.key === "?") {
         event.preventDefault();
         setShortcutHelp(true);
@@ -426,6 +456,7 @@ export function App() {
                   answerAudio: content.answerAudio,
                   questionVideo: content.questionVideo,
                   answerVideo: content.answerVideo,
+                  structure: content.structure,
                 }
               : c,
           ),
@@ -499,7 +530,6 @@ export function App() {
         meta: {
           ...deck.meta,
           deletedAt: null,
-          archived: false,
           starredCards: [],
         },
         cards: deck.cards.map((c) => ({
@@ -510,6 +540,7 @@ export function App() {
           answerAudio: c.answerAudio,
           questionVideo: c.questionVideo,
           answerVideo: c.answerVideo,
+          structure: c.structure,
         })),
       });
       await saveNativeDeck(copy);
@@ -549,6 +580,7 @@ export function App() {
         />
       )}
       {shortcutHelp && <ShortcutHelp onClose={() => setShortcutHelp(false)} />}
+      <Welcome20 upgraded={upgradedTo20 && !portableBusy}/>
       <PortableSets
         decks={decks}
         onBusy={setPortableBusy}
@@ -614,22 +646,7 @@ export function App() {
         </aside>
         <main>
           <header>
-            <label className="search">
-              <Search size={17} />
-              <input
-                ref={searchRef}
-                aria-label="Search sets and cards"
-                placeholder="Search sets, cards, and subjects"
-                value={query}
-                onFocus={() => {
-                  if (page !== "Library") go("Library");
-                }}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              <kbd>
-                <Command size={12} /> K
-              </kbd>
-            </label>
+            <button className="icon" aria-label="Search Flint" title={`Search Flint (${modifierLabel()} K)`} onClick={()=>setCommands(true)}><Search size={18}/></button>
             <div className="header-actions">
               <button
                 className="icon"
@@ -639,9 +656,6 @@ export function App() {
                 onClick={() => setDark(!dark)}
               >
                 {dark ? <Sun size={18} /> : <Moon size={18} />}
-              </button>
-              <button className="study-now" onClick={() => start()}>
-                <Play size={15} fill="currentColor" /> Study now
               </button>
             </div>
           </header>
@@ -663,7 +677,6 @@ export function App() {
                 <LibraryView
                   decks={decks}
                   start={start}
-                  globalQuery={query}
                   create={(folder) => {
                     setNewSetFolder(folder || "");
                     setEditingDeck(null);
@@ -743,7 +756,6 @@ export function App() {
                     start={start}
                     actions={setActions}
                     create={() => go("Create")}
-                    globalQuery={query}
                   />
                 ))}{" "}
               {page === "Import" && (
@@ -1461,6 +1473,7 @@ function CreatePage({
     answerAudio: null as string | null,
     questionVideo: null as string | null,
     answerVideo: null as string | null,
+    structure: null as StructuredCard | null,
   });
   const [setId] = useState(initialDeck?.id || draft?.setId || uid());
   const [description, setDescription] = useState(
@@ -1484,6 +1497,7 @@ function CreatePage({
         answerAudio: card.answerAudio || null,
         questionVideo: card.questionVideo || null,
         answerVideo: card.answerVideo || null,
+        structure: card.structure || null,
         starred: initialDeck.meta?.starredCards?.includes(card.id) || false,
       }))
     : Array.isArray(draft?.cards)
@@ -1499,6 +1513,7 @@ function CreatePage({
             answerAudio?: string | null;
             questionVideo?: string | null;
             answerVideo?: string | null;
+            structure?: StructuredCard | null;
             starred?: boolean;
           }) => ({
             draftId: card.draftId || uid(),
@@ -1511,6 +1526,7 @@ function CreatePage({
             answerAudio: card.answerAudio || null,
             questionVideo: card.questionVideo || null,
             answerVideo: card.answerVideo || null,
+            structure: card.structure || null,
             starred: !!card.starred,
           }),
         )
@@ -1537,6 +1553,7 @@ function CreatePage({
           answerAudio?: string | null;
           questionVideo?: string | null;
           answerVideo?: string | null;
+          structure?: StructuredCard | null;
           starred?: boolean;
         }[]
       >(initialCards.length ? initialCards : [blankDraftCard()]),
@@ -1560,7 +1577,8 @@ function CreatePage({
           tags,
         }),
       );
-      setSaved(true);
+      if(!inTauri())setSaved(true);
+      else void syncDraftMedia().then(()=>setSaved(true)).catch(()=>setError("Draft saved locally, but media protection could not be synchronized. Retry before cleanup."));
     }, 250);
     return () => clearTimeout(timer);
   }, [
@@ -1575,6 +1593,10 @@ function CreatePage({
     setId,
   ]);
   const finish = async () => {
+    if (cards.some(card => !isValidCardDraft(card))) {
+      setError("Complete each card before saving. Select an issue below to return to that card.");
+      return;
+    }
     const complete = cards.filter(isValidCardDraft);
     if (!canCreateDeck(title, cards)) return;
     setBusy(true);
@@ -1610,6 +1632,7 @@ function CreatePage({
           answerAudio: c.answerAudio || null,
           questionVideo: c.questionVideo || null,
           answerVideo: c.answerVideo || null,
+          structure: c.structure || null,
         })),
       };
       deck.meta.starredCards = complete.flatMap((card, index) =>
@@ -1631,11 +1654,10 @@ function CreatePage({
   };
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (document.querySelector("dialog[open]")) return;
+      if (event.defaultPrevented || event.isComposing || document.querySelector('dialog[open],[aria-modal="true"]')) return;
       if (event.ctrlKey || event.metaKey) {
         if (
-          event.key.toLowerCase() === "z" &&
-          !event.shiftKey &&
+          ["z", "y"].includes(event.key.toLowerCase()) &&
           (!editableTarget(event.target) ||
             (event.target instanceof Element &&
               event.target.closest(".edit-card")))
@@ -1646,6 +1668,10 @@ function CreatePage({
             if (event.shiftKey || event.key.toLowerCase() === "y") redoCards();
             else undoCards();
           }
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!busy && !removingCards.length) document.querySelector<HTMLButtonElement>(".editor-cards .add-card")?.click();
         } else if (event.key.toLowerCase() === "s") {
           event.preventDefault();
           event.stopPropagation();
@@ -1726,6 +1752,7 @@ function CreatePage({
             !canCreateDeck(title, cards) || busy || !!removingCards.length
           }
           onClick={finish}
+          title={`Save set (${modifierLabel()} S)`}
         >
           {busy
             ? initialDeck
@@ -1837,28 +1864,18 @@ function CreatePage({
         </div>
         <div
           className="editor-cards"
-          onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-              e.preventDefault();
-              setCards((x) => [...x, blankDraftCard()]);
-              requestAnimationFrame(() =>
-                document
-                  .querySelector<HTMLTextAreaElement>(
-                    ".editor-cards .edit-card:last-of-type textarea",
-                  )
-                  ?.focus(),
-              );
-            }
-          }}
         >
           {cards.map((c, i) => (
             <article
+              id={"draft-"+c.draftId}
+              tabIndex={-1}
               className={
                 "edit-card" +
                 (removingCards.includes(c.draftId) ? " removing" : "")
               }
               key={c.draftId}
             >
+              {cardIssues(c).length>0 && <div className="card-validation" role="status">{cardIssues(c).map(issue=><button type="button" className="text-button" key={issue} onClick={()=>{const card=document.getElementById("draft-"+c.draftId);card?.scrollIntoView({block:"center"});(card?.querySelector("textarea,input,select") as HTMLElement|null)?.focus();}}>Card {i+1} — {issue}</button>)}</div>}
               <div className="edit-card-head">
                 <b>{i + 1}</b>
                 <div>
@@ -1969,6 +1986,7 @@ function CreatePage({
                   </button>
                 </div>
               </div>
+              <StructuredEditor value={c.structure} onChange={structure => setCards(old => old.map(card => card.draftId === c.draftId ? {...card,structure} : card))}>
               <div className="edit-card-sides">
                 <button
                   type="button"
@@ -1990,8 +2008,10 @@ function CreatePage({
                     <ImageDestination>
                       <label>
                         {side === "question" ? "Front" : "Back"}
-                        <textarea
+                        <SmartMathTextarea
                           value={c[side]}
+                          suggestion={side === "answer" && !c.answer ? mathSuggestion(c.question) : null}
+                          onAcceptSuggestion={answer => setCards(old => old.map(v => v.draftId === c.draftId && !v.answer ? {...v,answer} : v))}
                           placeholder={
                             side === "question"
                               ? "Add front text"
@@ -2081,10 +2101,12 @@ function CreatePage({
                   </section>
                 ))}
               </div>
+              </StructuredEditor>
             </article>
           ))}
           <button
             className="add-card"
+            title={`Add card (${modifierLabel()} Enter)`}
             onClick={() => {
               setCards((x) => [...x, blankDraftCard()]);
               requestAnimationFrame(() =>
@@ -2096,7 +2118,7 @@ function CreatePage({
               );
             }}
           >
-            + Add card <kbd>{modifierLabel()} Enter</kbd>
+            + Add card
           </button>
         </div>
       </div>
@@ -2187,6 +2209,7 @@ function SettingsPage({
   displayName: string;
   setDisplayName: (x: string) => void;
 }) {
+  const [themeMode,setThemeMode]=usePreference<string>("theme-mode","manual");
   const [matching, setMatching] = useState(
     localStorage.getItem("flint-matching") || "Flexible",
   );
@@ -2199,6 +2222,7 @@ function SettingsPage({
         </div>
       </div>
       <div className="settings-grid">
+        <h2>Appearance & profile</h2>
         <div className="panel setting">
           <span>
             <Keyboard />
@@ -2237,10 +2261,9 @@ function SettingsPage({
               <p>Choose your preferred app theme.</p>
             </div>
           </span>
-          <button onClick={() => setDark(!dark)}>
-            {dark ? "Dark" : "Light"} <ChevronDown />
-          </button>
+          <select aria-label="Appearance theme" value={themeMode==="system"?"system":dark?"dark":"light"} onChange={event=>{if(event.target.value==="system")setThemeMode("system");else setDark(event.target.value==="dark");}}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
         </div>
+        <StudyPreferences/>
         <div className="panel setting">
           <span>
             <Keyboard />
@@ -2261,8 +2284,13 @@ function SettingsPage({
             <option>Minor typo tolerance</option>
           </select>
         </div>
-        <UpdateSettings />
+        <EditorPreferences/>
+        <AccessibilityPreferences/>
+        <h2>Storage & Data</h2>
         <BackupSettings />
+        <StorageMaintenance />
+        <h2>About & Updates</h2>
+        <UpdateSettings />
         <AboutSettings />
       </div>
     </>
@@ -2283,6 +2311,7 @@ function AboutSettings() {
         <Logo />
         <div>
           <b>About Flint</b>
+          <p><a href="https://github.com/Angingongic/flint/releases/latest" target="_blank" rel="noreferrer">Official Flint downloads</a></p>
           <p>
             Version {displayVersion(version) || "Loading…"} · Local-first study
             application
@@ -2293,6 +2322,8 @@ function AboutSettings() {
   );
 }
 function BackupSettings() {
+  const [preview,setPreview]=useState<{token:string;sets:number;cards:number;mediaFiles:number;appVersion:string;hasPreferences:boolean}|null>(null);
+  const [busy,setBusy]=useState(false);
   const [status, setStatus] = useState(
     "Portable .flintbackup archives include your SQLite library and history.",
   );
@@ -2312,13 +2343,13 @@ function BackupSettings() {
     }
   };
   const restore = async () => {
+    if(!inTauri()){setStatus("Backups are available in the installed desktop app.");return;}
     const path = await open({
       multiple: false,
       filters: [{ name: "Flint backup", extensions: ["flintbackup"] }],
     });
     if (typeof path === "string") {
-      await restoreBackup(path);
-      setStatus("Backup restored. Restart Flint to load it.");
+      setBusy(true);try{setPreview(await invoke("preview_backup",{path}));}catch(e){setStatus(String(e));}finally{setBusy(false);}
     }
   };
   return (
@@ -2331,9 +2362,10 @@ function BackupSettings() {
         </div>
       </span>
       <div className="button-row">
-        <button onClick={exportAll}>Export entire library</button>
-        <button onClick={restore}>Restore backup</button>
+        <button disabled={busy} onClick={()=>void exportAll().catch(e=>setStatus(String(e)))}>Export entire library</button>
+        <button disabled={busy} onClick={()=>void restore().catch(e=>setStatus(String(e)))}>Restore backup</button>
       </div>
+      {preview&&<Modal title="Preview backup restore" onClose={()=>{if(!busy)setPreview(null);}}><p>Created with Flint {preview.appVersion}. {preview.sets} sets, {preview.cards} cards and {preview.mediaFiles} media files. {preview.hasPreferences?"Includes preferences.":"Existing preferences will be kept."}</p><p>This replaces the active library on next launch. Your complete current library will be retained in a restore-recovery folder inside Flint app data. The source backup is unchanged.</p><div className="modal-actions"><button disabled={busy} onClick={()=>setPreview(null)}>Cancel</button><button disabled={busy} className="danger" onClick={async()=>{setBusy(true);try{await restoreBackup(preview.token);setPreview(null);setStatus("Validated restore queued. Close and reopen Flint to apply it. Your current library remains active until then.");}catch(e){setStatus(String(e));}finally{setBusy(false);}}}>Queue restore for next launch</button></div></Modal>}
     </div>
   );
 }

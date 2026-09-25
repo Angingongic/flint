@@ -4,10 +4,12 @@ export function Modal({
   title,
   children,
   onClose,
+  dismissOutside = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  dismissOutside?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const closeRef = useRef(onClose);
@@ -32,8 +34,15 @@ export function Modal({
       }
       className="flint-modal"
       aria-label={title}
+      onClick={event=>{
+        if(!dismissOutside||event.target!==event.currentTarget)return;
+        const rect=event.currentTarget.getBoundingClientRect();
+        if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeRef.current();
+      }}
       onCancel={(e) => {
         e.preventDefault();
+        // React delegates cancel events: a nested editor must not cancel its parent draft.
+        e.stopPropagation();
         closeRef.current();
       }}
     >

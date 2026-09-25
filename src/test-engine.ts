@@ -1,7 +1,10 @@
 import { Card, isValidCardDraft } from "./lib";
+import { selectTargets, type Target } from "./structured";
 import { shuffle, sides, grade } from "./learn-engine";
 export type TestKind = "choice" | "written" | "boolean" | "matching";
 export type TestQuestion = {
+  id?: string;
+  structuredTargets?: Target[];
   card: Card;
   kind: TestKind;
   prompt: string;
@@ -30,6 +33,10 @@ export type TestQuestion = {
 };
 const textKey = (text: string) =>
   text.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
+export function testAvailability(cards: Card[]): Record<TestKind,boolean> {
+  const valid=cards.filter(isValidCardDraft), normal=valid.filter(c=>!c.structure);
+  return {written:valid.some(c=>c.structure || c.answer.trim() || c.question.trim()),choice:new Set(normal.map(cardKey)).size>=2,boolean:normal.length>0,matching:new Set(normal.map(c=>textKey(c.question)||c.questionImage||c.questionAudio||c.questionVideo)).size>=3 && new Set(normal.map(c=>textKey(c.answer)||c.answerImage||c.answerAudio||c.answerVideo)).size>=3};
+}
 export const cardKey = (card: Card) =>
   JSON.stringify([
     textKey(card.question),
@@ -65,6 +72,22 @@ export function makeTest(
   direction: "terms" | "definitions" | "both",
 ): TestQuestion[] {
   if (!kinds.length || !Number.isInteger(count) || count < 1) return [];
+  if (cards.some(card => card.structure)) {
+    if (!kinds.includes("written")) return makeTest(cards.filter(card=>!card.structure),count,kinds,direction);
+    const used = new Set<string>();
+    const structuredCards = shuffle(cards.filter(card => card.structure && isValidCardDraft(card) && !used.has(card.id) && !!used.add(card.id)));
+    const structured: TestQuestion[]=[];
+    const masks=new Set<string>();
+    for(let round=0;round<40 && structured.length<count;round++) for(const card of structuredCards) {
+      if(structured.length>=count)break;
+      const targets = selectTargets(card.structure!);
+      const id=JSON.stringify([card.id,...targets.map(t=>t.id).sort()]);
+      if(!targets.length || masks.has(id))continue;
+      masks.add(id);
+      structured.push({ id, card, kind:"written", prompt:card.structure!.title || "Complete the missing information", answer:targets.map(t => `${t.label}: ${t.answer}`).join("; "), choices:[], structuredTargets:targets });
+    }
+    return shuffle([...structured,...makeTest(cards.filter(card => !card.structure),count-structured.length,kinds,direction)]);
+  }
   const seen = new Set<string>(),
     ids = new Set<string>();
   const eligible = cards.filter((card) => {
@@ -199,6 +222,7 @@ export function makeTest(
   return questions;
 }
 export function testCorrect(q: TestQuestion, value: string | undefined) {
+  if (q.structuredTargets) return q.structuredTargets.every(target => grade(structuredAnswers(value)[target.id] || "",target.answer) !== "INCORRECT");
   if (!value?.trim()) return false;
   return q.kind === "written"
     ? grade(value, q.answer) !== "INCORRECT"
@@ -206,7 +230,15 @@ export function testCorrect(q: TestQuestion, value: string | undefined) {
       ? value === String(q.truth)
       : value === q.card.id;
 }
+export function structuredAnswers(value: string | undefined): Record<string,string> {
+  try { const parsed = JSON.parse(value || "{}"); return parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.values(parsed).every(v => typeof v === "string") ? parsed : {}; } catch { return {}; }
+}
+export function questionId(question: TestQuestion) {return question.id || question.card.id;}
+export function testAnswered(q: TestQuestion, value: string | undefined) {
+  return q.structuredTargets ? q.structuredTargets.every(t => structuredAnswers(value)[t.id]?.trim()) : !!value?.trim();
+}
 export function testAnswer(q: TestQuestion, value: string | undefined) {
+  if (q.structuredTargets) return q.structuredTargets.map(target => `${target.label}: ${structuredAnswers(value)[target.id] || "Unanswered"}`).join("; ");
   return !value
     ? "Unanswered"
     : q.kind === "written"

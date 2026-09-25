@@ -134,13 +134,11 @@ describe("Library and study polish", () => {
         ).toBe("1");
       if (mode === "Learn") {
         fireEvent.click(await screen.findByRole("button", { name: "Start" }));
-        await waitFor(() =>
-          expect(document.querySelector(".choice-grid")).toBeTruthy(),
-        );
-        expect(document.querySelectorAll(".choice-grid > div")).toHaveLength(1);
-        expect(document.querySelector(".choice-grid")?.textContent).toContain(
-          "Second",
-        );
+        // One eligible answer cannot form a meaningful multiple-choice question.
+        expect(await screen.findByLabelText("Your answer")).toBeTruthy();
+        expect(screen.getByRole("heading",{name:"Back two"})).toBeTruthy();
+        expect(document.querySelector(".choice-grid")).toBeNull();
+        expect(screen.getByRole("progressbar",{name:"Wave recall"}).getAttribute("aria-valuenow")).toBe("0");
       }
       view.unmount();
       render(

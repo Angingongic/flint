@@ -1,4 +1,7 @@
 import { editableTarget } from "./editing";
+import { MathText } from "./MathText";
+import { StructuredView } from "./StructuredView";
+import { structuredAnswers, testAnswered, questionId } from "./test-engine";
 import { StudyScope } from "./StudyScope";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Matching } from "./Matching";
@@ -14,6 +17,7 @@ import {
   TestKind,
   TestQuestion,
   testRows,
+  testAvailability,
 } from "./test-engine";
 import { recordTestAttempt } from "./native";
 import { StudyImage } from "./Study";
@@ -47,11 +51,15 @@ function TestSession({
     scoreRef = useRef<HTMLDivElement>(null),
     reduced = useReducedMotion();
   const rows = useMemo(() => testRows(questions || []), [questions]);
+  const available=useMemo(()=>testAvailability(deck.cards),[deck.cards]);
+  const planned=useMemo(()=>makeTest(deck.cards,count,kinds.filter(kind=>available[kind]),direction),[deck.cards,count,kinds,direction,available]);
+  const typeDescriptions:Record<TestKind,string>={choice:"Choose from answer options.",written:"Type answers, including missing table cells and diagram labels.",boolean:"Decide whether a statement is true or false.",matching:"Arrange compatible term/definition pairs."};
+  const unavailableReasons:Record<TestKind,string>={choice:"Multiple choice needs at least two distinct compatible normal cards.",written:"Written needs valid cards with answer text or structured targets.",boolean:"True / False needs at least one compatible normal card.",matching:"Matching is unavailable because these cards don't contain enough compatible term/definition pairs (at least three distinct pairs)."};
   const missing = (questions || []).filter((q) =>
-    (q.matchRows || [q]).some((row) => !answers[row.card.id]?.trim()),
+    (q.matchRows || [q]).some((row) => !testAnswered(row,answers[questionId(row)])),
   );
   const questionCorrect = (q: TestQuestion) =>
-    (q.matchRows || [q]).every((row) => testCorrect(row, answers[row.card.id]));
+    (q.matchRows || [q]).every((row) => testCorrect(row, answers[questionId(row)]));
   const correct = (questions || []).filter(questionCorrect);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -68,14 +76,14 @@ function TestSession({
       )
         return;
       const visible = (questions || []).filter((q) => {
-        const r = refs.current[q.card.id]?.getBoundingClientRect();
+        const r = refs.current[questionId(q)]?.getBoundingClientRect();
         return q.kind === "choice" && r && r.bottom > 0 && r.top < innerHeight;
       });
-      const q = visible.find((q) => q.card.id === current) || visible[0];
+      const q = visible.find((q) => questionId(q) === current) || visible[0];
       const choice = q?.choices[Number(e.key) - 1];
-      if (q && choice && !checked.includes(q.card.id)) {
+      if (q && choice && !checked.includes(questionId(q))) {
         e.preventDefault();
-        update(q.card.id, choice.id);
+        update(questionId(q), choice.id);
       }
     };
     window.addEventListener("keydown", key);
@@ -123,13 +131,13 @@ function TestSession({
           kind: q.kind,
           question: q.prompt,
           answer: q.answer,
-          user: testAnswer(q, answers[q.card.id]),
-          correct: testCorrect(q, answers[q.card.id]),
+          user: testAnswer(q, answers[questionId(q)]),
+          correct: testCorrect(q, answers[questionId(q)]),
           flagged: questions.some(
             (group) =>
-              flags.includes(group.card.id) &&
+              flags.includes(questionId(group)) &&
               (group.matchRows || [group]).some(
-                (row) => row.card.id === q.card.id,
+                (row) => questionId(row) === questionId(q),
               ),
           ),
         })),
@@ -178,9 +186,9 @@ function TestSession({
             <p className="eyebrow">A QUIET CHALLENGE</p>
             <h1>Create a test</h1>
             <p>
-              Find out what has stayed with you.
-              <br />A fixed worksheet, at your own pace.
+              Choose how you want to practice. Your test uses the cards selected for this session.
             </p>
+            <section className="test-plan" aria-label="Test summary"><b>{planned.length} questions</b><p>{deck.cards.length} selected cards</p><ul>{(Object.keys(testLabels) as TestKind[]).filter(kind=>planned.some(q=>q.kind===kind)).map(kind=><li key={kind}><span>{testLabels[kind]}</span><strong>{planned.filter(q=>q.kind===kind).length}</strong></li>)}</ul><small>{instant?"Check answers as you go.":"Answers stay hidden until submission."}</small>{planned.length<count&&<p>Fewer unique questions are available with these cards and settings.</p>}</section>
           </div>
           <div className="config-fields">
             <label>
@@ -189,7 +197,7 @@ function TestSession({
                 aria-label="Number of questions"
                 type="number"
                 min={1}
-                max={deck.cards.length}
+                max={deck.cards.reduce((n,c)=>n+(c.structure ? 10 : 1),0)}
                 value={count}
                 onChange={(e) => setCount(+e.target.value)}
               />
@@ -201,10 +209,13 @@ function TestSession({
             <fieldset>
               <legend>Question types</legend>
               {(Object.keys(testLabels) as TestKind[]).map((kind) => (
-                <label key={kind}>
+                <label key={kind} className="test-type-option" aria-disabled={!available[kind]} title={!available[kind] ? unavailableReasons[kind] : typeDescriptions[kind]}>
                   <input
+                    aria-label={testLabels[kind]}
+                    aria-describedby={`test-kind-${kind}`}
                     type="checkbox"
-                    checked={kinds.includes(kind)}
+                    disabled={!available[kind]}
+                    checked={available[kind] && kinds.includes(kind)}
                     onChange={() =>
                       setKinds((old) =>
                         old.includes(kind)
@@ -213,7 +224,7 @@ function TestSession({
                       )
                     }
                   />
-                  {testLabels[kind]}
+                  <span><b>{testLabels[kind]}</b><small id={`test-kind-${kind}`}>{available[kind]?typeDescriptions[kind]:unavailableReasons[kind]}</small></span>
                 </label>
               ))}
             </fieldset>
@@ -245,11 +256,11 @@ function TestSession({
               disabled={
                 !Number.isInteger(count) ||
                 count < 1 ||
-                count > deck.cards.length ||
-                !kinds.length
+                count > deck.cards.reduce((n,c)=>n+(c.structure ? 10 : 1),0) ||
+                !kinds.some(k=>available[k]) || !planned.length
               }
               onClick={() => {
-                const generated = makeTest(deck.cards, count, kinds, direction);
+                const generated = planned;
                 if (!generated.length) {
                   setError(
                     "Matching needs at least 3 distinct usable pairs. Enable another question type or add cards.",
@@ -328,7 +339,7 @@ function TestSession({
                       studyMissed({
                         ...deck,
                         cards: rows
-                          .filter((q) => !testCorrect(q, answers[q.card.id]))
+                          .filter((q) => !testCorrect(q, answers[questionId(q)]))
                           .map((q) => q.card),
                       })
                     }
@@ -350,7 +361,7 @@ function TestSession({
                 </button>
                 <button
                   className="secondary"
-                  onClick={() => jump(questions[0].card.id)}
+                  onClick={() => jump(questionId(questions[0]))}
                 >
                   Review answers
                 </button>
@@ -361,7 +372,7 @@ function TestSession({
           <div className="exam-layout">
             <div className="exam-document">
               {questions.map((q, index) => {
-                const id = q.card.id,
+                const id = questionId(q),
                   show =
                     submitted ||
                     checked.includes(id) ||
@@ -407,7 +418,7 @@ function TestSession({
                       <h2>
                         {q.matchRows
                           ? `Match ${q.matchRows.length} pairs`
-                          : q.prompt}
+                          : <MathText text={q.prompt}/>}
                       </h2>
                       {!q.matchRows && (
                         <StudyImage
@@ -417,7 +428,7 @@ function TestSession({
                           alt="Question visual"
                         />
                       )}
-                      {q.kind === "written" ? (
+                      {q.structuredTargets && q.card.structure ? <StructuredView value={q.card.structure} mode={q.card.structure.type==="occlusion"?"choice":"typed"} targetIds={q.structuredTargets.map(t => t.id)} answers={structuredAnswers(answers[id])} onAnswer={(target,value) => { if (!show && !saving && !checked.includes(id)) update(id,JSON.stringify({...structuredAnswers(answers[id]),[target]:value})); }} results={show || checked.includes(id) ? Object.fromEntries(q.structuredTargets.map(t => [t.id,gradeAnswer(structuredAnswers(answers[id])[t.id] || "",t.answer) !== "INCORRECT"])) : undefined} onSubmit={() => { if (instant && !show && testAnswered(q,answers[id])) setChecked(old => [...old,id]); }} /> : q.kind === "written" ? (
                         <AnswerInput
                           cards={deck.cards}
                           aria-label={"Answer " + (index + 1)}
@@ -458,7 +469,7 @@ function TestSession({
                       ) : q.kind === "boolean" ? (
                         <>
                           <div className="truth-claim">
-                            {q.claim}
+                            <MathText text={q.claim || ""}/>
                             <StudyImage
                               name={q.claimImage}
                               audio={q.claimAudio}
@@ -481,36 +492,40 @@ function TestSession({
                           </fieldset>
                         </>
                       ) : (
-                        <fieldset disabled={show || saving}>
+                        <fieldset>
                           {q.choices.map((c) => (
-                            <label key={c.id}>
+                            <div className="test-choice-media" key={c.id}><label>
                               <input
                                 type="radio"
+                                disabled={show || saving}
                                 name={id}
                                 checked={answers[id] === c.id}
                                 onChange={() => update(id, c.id)}
                               />
-                              {c.text}
+                              <MathText text={c.text}/>
+                              {!c.text && c.video && <span>Select this video answer</span>}
+                            </label>
                               <StudyImage
                                 name={c.image}
+                                mode="choice"
                                 audio={c.audio}
                                 video={c.video}
                                 alt="Answer choice visual"
                               />
-                            </label>
+                            </div>
                           ))}
                         </fieldset>
                       )}
                       {instant && !show && q.kind !== "matching" && (
                         <button
                           className="secondary"
-                          disabled={!answers[id]?.trim() || saving}
+                          disabled={!testAnswered(q,answers[id]) || saving}
                           onClick={() => setChecked((old) => [...old, id])}
                         >
                           Check answer
                         </button>
                       )}
-                      {show && q.kind !== "matching" && (
+                      {show && q.kind !== "matching" && !q.structuredTargets && (
                         <div className={ok ? "result-correct" : "result-wrong"}>
                           <b>
                             {ok
@@ -555,17 +570,17 @@ function TestSession({
               <div>
                 {questions.map((q, i) => (
                   <button
-                    key={q.card.id}
+                    key={questionId(q)}
                     aria-label={"Go to question " + (i + 1)}
-                    aria-current={current === q.card.id ? "step" : undefined}
+                    aria-current={current === questionId(q) ? "step" : undefined}
                     className={
-                      (answers[q.card.id]?.trim() ? "answered " : "") +
-                      (flags.includes(q.card.id) ? "flagged" : "")
+                      (answers[questionId(q)]?.trim() ? "answered " : "") +
+                      (flags.includes(questionId(q)) ? "flagged" : "")
                     }
-                    onClick={() => jump(q.card.id)}
+                    onClick={() => jump(questionId(q))}
                   >
                     {String(i + 1).padStart(2, "0")}
-                    {flags.includes(q.card.id) && <Flag size={9} />}
+                    {flags.includes(questionId(q)) && <Flag size={9} />}
                   </button>
                 ))}
               </div>
@@ -586,7 +601,7 @@ function TestSession({
               <button
                 className="secondary"
                 onClick={() => {
-                  jump(missing[0].card.id);
+                  jump(questionId(missing[0]));
                   setWarning(false);
                 }}
               >

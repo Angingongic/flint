@@ -19,6 +19,7 @@ export function duplicateKind(
     | "answerAudio"
     | "questionVideo"
     | "answerVideo"
+    | "structure"
   >,
   b: Pick<
     Card,
@@ -30,8 +31,11 @@ export function duplicateKind(
     | "answerAudio"
     | "questionVideo"
     | "answerVideo"
+    | "structure"
   >,
 ): "exact" | "near" | null {
+  if (a.structure || b.structure)
+    return a.structure && b.structure && JSON.stringify(a.structure) === JSON.stringify(b.structure) ? "exact" : null;
   if (
     (a.questionImage || "") !== (b.questionImage || "") ||
     (a.answerImage || "") !== (b.answerImage || "") ||

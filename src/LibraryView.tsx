@@ -20,7 +20,6 @@ import {
 } from "./library-order";
 import { useEffect, useRef, useState } from "react";
 import {
-  Archive,
   Copy,
   Download,
   Edit3,
@@ -64,7 +63,7 @@ export type SetActions = {
   afterDelete?: () => void;
 };
 export const activeSet = (deck: Deck) =>
-  !deck.meta?.deletedAt && !deck.meta?.archived;
+  !deck.meta?.deletedAt;
 export function lastStudied(deck: Deck) {
   const stamp =
     deck.lastStudied ||
@@ -181,20 +180,6 @@ export function DeckMenu({
           >
             <FolderInput />
             Move to folder
-          </button>
-          <button
-            disabled={busy}
-            onClick={() =>
-              run(() =>
-                actions.update({
-                  ...deck,
-                  meta: { ...deck.meta, archived: !deck.meta?.archived },
-                }),
-              )
-            }
-          >
-            <Archive />
-            {deck.meta?.archived ? "Unarchive" : "Archive"}
           </button>
           <button
             className="danger-text"
@@ -322,7 +307,7 @@ export function RichDeckCard({
         </div>
         <p>
           {deck.cards.length} cards ·{" "}
-          {deck.meta?.folder || deck.subject || "General"}
+          {deck.subject || deck.meta?.folder || "General"}
         </p>
         <small>{lastStudied(deck)}</small>
         {studied && (
@@ -379,13 +364,13 @@ export function LibraryView({
   start,
   actions,
   create,
-  globalQuery,
+  globalQuery = "",
 }: {
   decks: Deck[];
   start: (deck: Deck) => void;
   actions: SetActions;
   create: (folder?: string) => void;
-  globalQuery: string;
+  globalQuery?: string;
 }) {
   const [storage, setStorage] = useState<number | null>(null);
   useEffect(() => {
@@ -419,7 +404,7 @@ export function LibraryView({
     }
   };
   const [query, setQuery] = useState(""),
-    [filter, setFilter] = useState("All"),
+    [filter, setFilter] = useState<"library" | "Trash">("library"),
     [sort, setSort] = useState(layout.sort || "studied"),
     [view, setView] = useState("grid"),
     [folder, setFolder] = useState<string>(() =>
@@ -453,6 +438,24 @@ export function LibraryView({
     } | null>(null),
     [name, setName] = useState("");
   const toolbar = useRef<HTMLDivElement>(null);
+  const libraryMenu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const dismiss = (event: PointerEvent) => {
+      if (!libraryMenu.current?.contains(event.target as Node)) libraryMenu.current?.removeAttribute("open");
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && libraryMenu.current?.open) {
+        libraryMenu.current.removeAttribute("open");
+        libraryMenu.current.querySelector("summary")?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, []);
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
     let last = window.scrollY,
@@ -470,7 +473,7 @@ export function LibraryView({
           document.activeElement?.matches(
             "input,select,textarea,[contenteditable=true]",
           )) ||
-        document.querySelector(".anchored-item-menu")
+        document.querySelector(".anchored-item-menu") || libraryMenu.current?.open
       )
         return;
       const nextDirection = Math.sign(delta);
@@ -512,16 +515,10 @@ export function LibraryView({
     .filter((d) =>
       filter === "Trash"
         ? !!d.meta?.deletedAt
-        : filter === "Archived"
-          ? !d.meta?.deletedAt && d.meta?.archived
-          : activeSet(d),
+        : activeSet(d),
     )
     .filter((d) =>
-      filter === "Favorites"
-        ? d.favorite
-        : filter === "Recent"
-          ? !!(d.lastStudied || d.cards.some((c) => c.lastReviewed))
-          : true,
+      filter === "Trash" || sort !== "favorites" || d.favorite,
     )
     .filter(matches);
   const folders =
@@ -543,6 +540,7 @@ export function LibraryView({
           ? 0
           : sort === "name"
             ? a.title.localeCompare(b.title)
+            : sort === "name-desc" ? b.title.localeCompare(a.title)
             : sort === "cards"
               ? b.cards.length - a.cards.length
               : sort === "created"
@@ -887,7 +885,7 @@ export function LibraryView({
           ) : proposal.kind === "delete" ? (
             <p>
               All {proposal.ids.length} sets in this folder will move to Trash,
-              including archived sets. Each set is one Trash item. Trash keeps
+              including nested sets. Each set is one Trash item. Trash keeps
               at most 5 sets for 7 days; excess oldest sets are permanently
               deleted. The folder disappears when empty and returns when a
               member is restored.
@@ -939,7 +937,7 @@ export function LibraryView({
         <div>
           <p className="eyebrow">{folder ? "FOLDER" : "YOUR COLLECTION"}</p>
           <h1>
-            {folderName(folder) === "Library"
+            {filter === "Trash" ? "Trash" : folderName(folder) === "Library"
               ? "Your Library"
               : folderName(folder)}
           </h1>
@@ -964,7 +962,7 @@ export function LibraryView({
             <input
               aria-label="Search your sets"
               placeholder={
-                folder ? "Search this folder…" : "Search sets and folders…"
+                "Search sets, folders, subjects, and tags"
               }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -1030,21 +1028,7 @@ export function LibraryView({
             </div>
           )}
           <div className="library-controls">
-            <div className="filter-tabs">
-              {["All", "Recent", "Favorites", "Archived", "Trash"].map((f) => (
-                <button
-                  key={f}
-                  aria-pressed={filter === f}
-                  className={filter === f ? "selected" : ""}
-                  onClick={() => {
-                    setFilter(f);
-                    setFolder("");
-                  }}
-                >
-                  {folderName(f)}
-                </button>
-              ))}
-            </div>
+            {filter === "Trash" && <button className="secondary" onClick={() => setFilter("library")}>Back to Library</button>}
             <div className="button-row">
               <select
                 aria-label="Sort sets"
@@ -1057,8 +1041,10 @@ export function LibraryView({
                 <option value="manual">Custom</option>
                 <option value="studied">Recently studied</option>
                 <option value="created">Recently created</option>
-                <option value="name">Name</option>
+                <option value="name">Name A–Z</option>
+                <option value="name-desc">Name Z–A</option>
                 <option value="cards">Most cards</option>
+                <option value="favorites">Favorites</option>
               </select>
               <button
                 className="icon"
@@ -1076,6 +1062,10 @@ export function LibraryView({
               >
                 <List size={17} />
               </button>
+              <details ref={libraryMenu} className="library-overflow">
+                <summary aria-label="Library menu">•••</summary>
+                <div><button type="button" onClick={() => { setFilter("Trash"); setFolder(""); libraryMenu.current?.removeAttribute("open"); }}>Trash</button></div>
+              </details>
             </div>
           </div>
         </div>

@@ -4,12 +4,29 @@ use std::collections::HashMap;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 const MAX_SET: u64 = 100 * 1024 * 1024;
 const MAX_ENTRY: u64 = 25 * 1024 * 1024;
+pub fn format_name(version: u32) -> Option<&'static str> {
+    ["Prelude", "Aria", "Cadence", "Sonata", "Nocturne", "Coda", "Chorus", "Rhapsody"].get(version.checked_sub(1)? as usize).copied()
+}
+#[derive(Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FormatMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    format_version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    format_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_with_flint_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    minimum_flint_version: Option<String>,
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     format: String,
     version: u32,
     deck: Deck,
+    #[serde(flatten)]
+    metadata: FormatMetadata,
 }
 struct Package {
     manifest: Manifest,
@@ -26,6 +43,8 @@ pub struct Preview {
     token: String,
     deck: Deck,
     media: HashMap<String, Vec<u8>>,
+    #[serde(flatten)]
+    metadata: FormatMetadata,
 }
 fn safe_name(name: &str) -> bool {
     !name.is_empty()
@@ -68,6 +87,7 @@ fn refs(deck: &Deck) -> Vec<&str> {
                 .chain(c.answer_audio.iter())
                 .chain(c.question_video.iter())
                 .chain(c.answer_video.iter())
+                .chain(c.structure.as_ref().into_iter().flat_map(structured::image_refs))
         }))
         .map(String::as_str)
         .collect()
@@ -75,10 +95,8 @@ fn refs(deck: &Deck) -> Vec<&str> {
 fn validate(package: &Package) -> Result<(), String> {
     let manifest = &package.manifest;
     let deck = &manifest.deck;
-    if manifest.format != "flint-set" || !matches!(manifest.version, 1 | 2 | 3) {
-        return Err(
-            "Unsupported Flint set format/version. Update Flint to open newer formats.".into(),
-        );
+    if manifest.format != "flint-set" || !matches!(manifest.version, 1 | 2 | 3 | 4) {
+        return Err("Unsupported Flint set format/version. Update Flint to open newer formats.".into());
     }
     if deck.id.is_empty()
         || deck.id.len() > 180
@@ -156,6 +174,12 @@ fn validate(package: &Package) -> Result<(), String> {
     }
     let mut ids = HashSet::new();
     for c in &deck.cards {
+        if let Some(value) = &c.structure {
+            if manifest.version < 4 {
+                return Err("Structured cards require Flint package version 4. Download Flint: https://github.com/Angingongic/flint/releases/latest".into());
+            }
+            structured::validate(value)?;
+        }
         if c.id.is_empty()
             || c.id.len() > 180
             || !ids.insert(c.id.as_str())
@@ -164,11 +188,13 @@ fn validate(package: &Package) -> Result<(), String> {
             || (c.question.trim().is_empty()
                 && c.question_image.is_none()
                 && c.question_audio.is_none()
-                && c.question_video.is_none())
+                && c.question_video.is_none()
+                && c.structure.is_none())
             || (c.answer.trim().is_empty()
                 && c.answer_image.is_none()
                 && c.answer_audio.is_none()
-                && c.answer_video.is_none())
+                && c.answer_video.is_none()
+                && c.structure.is_none())
         {
             return Err("Invalid card content or duplicate card ID".into());
         }
@@ -224,7 +250,12 @@ fn validate(package: &Package) -> Result<(), String> {
                 return Err("Invalid audio attachment or old package format".into());
             }
         }
-        for name in c.question_image.iter().chain(c.answer_image.iter()) {
+        for name in c
+            .question_image
+            .iter()
+            .chain(c.answer_image.iter())
+            .chain(c.structure.as_ref().into_iter().flat_map(structured::image_refs))
+        {
             if (name.ends_with(".gif") && manifest.version < 3)
                 || !package
                     .media
@@ -270,6 +301,9 @@ fn validate(package: &Package) -> Result<(), String> {
     Ok(())
 }
 fn read_package(path: &Path) -> Result<Package, String> {
+    read_package_with_repair(path, false)
+}
+fn read_package_with_repair(path: &Path, repair: bool) -> Result<Package, String> {
     if !path
         .extension()
         .and_then(|s| s.to_str())
@@ -277,9 +311,13 @@ fn read_package(path: &Path) -> Result<Package, String> {
     {
         return Err("Choose a .flint study set, not a .flintbackup library backup".into());
     }
-    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     if file.metadata().map_err(|e| e.to_string())?.len() > MAX_SET {
         return Err("Set exceeds 100 MB".into());
+    }
+    let mut signature=[0u8;4];
+    if file.read_exact(&mut signature).is_err() || !signature.starts_with(b"PK") {
+        return Err(serde_json::json!({"kind":"not-flint","detail":"The file is not a Flint ZIP container.","repairable":false}).to_string());
     }
     let mut zip = ZipArchive::new(file).map_err(|_| "Corrupt Flint set archive")?;
     if zip.len() > 20002 {
@@ -314,11 +352,80 @@ fn read_package(path: &Path) -> Result<Package, String> {
             media.insert(name[6..].to_string(), bytes);
         }
     }
-    let manifest = serde_json::from_slice(&manifest.ok_or("Missing manifest")?)
+    let raw: serde_json::Value = serde_json::from_slice(&manifest.ok_or("Missing manifest")?)
         .map_err(|e| format!("Invalid manifest: {e}"))?;
+    let issue = |kind: &str, detail: &str| serde_json::json!({"kind":kind,"version":raw.get("formatVersion").or_else(||raw.get("version")),"minimumFlintVersion":raw.get("minimumFlintVersion"),"detail":detail,"repairable":false}).to_string();
+    if raw["format"] != "flint-set" { return Err(issue("not-flint", "The required flint-set manifest identity is missing.")); }
+    // Historical packages always used `version`; no content-based inference exists.
+    let version = raw.get("formatVersion").or_else(||raw.get("version")).and_then(|v|v.as_u64());
+    if version.is_none_or(|v| !(1..=4).contains(&v)) { return Err(issue("unsupported", "Unsupported numeric/schema generation.")); }
+    if raw.get("version").is_some() && raw.get("formatVersion").is_some() && raw["version"] != raw["formatVersion"] { return Err(issue("corrupt", "Conflicting format identifiers cannot be safely repaired.")); }
+    let mut normalized = raw.clone();
+    normalized["version"] = serde_json::json!(version.unwrap());
+    // Only absent derived scheduling fields have deterministic import defaults.
+    // Authored text, IDs, media, structure and existing progress are never repaired.
+    let mut repaired = normalized.clone();
+    let mut changes = false;
+    if let Some(cards) = repaired["deck"]["cards"].as_array_mut() {
+        for card in cards {
+            if let Some(object) = card.as_object_mut() {
+                for (key, value) in [("status",serde_json::json!("New")),("accuracy",serde_json::json!(0)),("dueAt",serde_json::json!("1970-01-01T00:00:00Z")),("intervalDays",serde_json::json!(0)),("ease",serde_json::json!(2.5)),("repetitions",serde_json::json!(0)),("lapses",serde_json::json!(0))] {
+                    if !object.contains_key(key) { object.insert(key.into(),value); changes=true; }
+                }
+            }
+        }
+    }
+    let source = if changes { repaired } else { normalized };
+    let manifest = serde_json::from_value(source).map_err(|e| issue("corrupt", &format!("Invalid manifest: {e}")))?;
     let package = Package { manifest, media };
-    validate(&package)?;
+    validate(&package).map_err(|e| issue("corrupt", &e))?;
+    if changes && !repair {
+        return Err(serde_json::json!({"kind":"corrupt","version":version,"detail":"Missing derived study scheduling metadata. Original study content and media passed validation. Repair restores import defaults without changing study content.","repairable":true}).to_string());
+    }
     Ok(package)
+}
+fn deduplicate_media(mut package: Package) -> Package {
+    use std::hash::{Hash, Hasher};
+    let mut unique: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut buckets: HashMap<(u64, String), Vec<String>> = HashMap::new();
+    let mut aliases = HashMap::new();
+    let mut entries: Vec<_> = package.media.into_iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, bytes) in entries {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hash);
+        let extension = Path::new(&name)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let bucket = buckets.entry((hash.finish(), extension)).or_default();
+        // Hashes are only an index. Exact bytes must match before sharing an entry.
+        if let Some(existing) = bucket.iter().find(|key| unique.get(*key) == Some(&bytes)) {
+            aliases.insert(name, existing.clone());
+        } else {
+            bucket.push(name.clone());
+            unique.insert(name, bytes);
+        }
+    }
+    for name in package.manifest.deck.cover_image.iter_mut().chain(
+        package.manifest.deck.cards.iter_mut().flat_map(|c| {
+            c.question_image
+                .iter_mut()
+                .chain(c.answer_image.iter_mut())
+                .chain(c.question_audio.iter_mut())
+                .chain(c.answer_audio.iter_mut())
+                .chain(c.question_video.iter_mut())
+                .chain(c.answer_video.iter_mut())
+                .chain(c.structure.as_mut().into_iter().flat_map(structured::image_muts))
+        }),
+    ) {
+        if let Some(canonical) = aliases.get(name) {
+            *name = canonical.clone();
+        }
+    }
+    package.media = unique;
+    package
 }
 fn write_package(path: &Path, package: &Package) -> Result<(), String> {
     validate(package)?;
@@ -329,29 +436,30 @@ fn write_package(path: &Path, package: &Package) -> Result<(), String> {
     {
         return Err("Set exceeds 100 MB".into());
     }
-    // Assemble before opening the destination; failures never leave a partial archive.
-    let mut zip = ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    zip.start_file("manifest.json", options)
-        .map_err(|e| e.to_string())?;
-    zip.write_all(&manifest).map_err(|e| e.to_string())?;
-    for (name, bytes) in &package.media {
-        zip.start_file(format!("media/{name}"), options)
-            .map_err(|e| e.to_string())?;
-        zip.write_all(bytes).map_err(|e| e.to_string())?;
-    }
-    let bytes = zip.finish().map_err(|e| e.to_string())?.into_inner();
-    if bytes.len() as u64 > MAX_SET {
-        return Err("Compressed set exceeds 100 MB".into());
-    }
+    // Stream compressed output to a sibling temporary file. The chosen destination
+    // remains intact on failure, without a second full archive allocation in RAM.
     let temporary = path.with_file_name(format!(".flint-export-{}.tmp", Uuid::new_v4()));
-    let mut file = fs::OpenOptions::new()
+    let file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)
         .map_err(|e| e.to_string())?;
     let result = (|| -> Result<(), String> {
-        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        let mut zip = ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("manifest.json", options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(&manifest).map_err(|e| e.to_string())?;
+        for (name, bytes) in &package.media {
+            zip.start_file(format!("media/{name}"), options)
+                .map_err(|e| e.to_string())?;
+            zip.write_all(bytes).map_err(|e| e.to_string())?;
+        }
+        let file = zip.finish().map_err(|e| e.to_string())?;
+        if file.metadata().map_err(|e| e.to_string())?.len() > MAX_SET {
+            return Err("Compressed set exceeds 100 MB".into());
+        }
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
         fs::rename(&temporary, path).map_err(|e| e.to_string())
@@ -382,32 +490,26 @@ pub fn export_flint(path: String, deck: Deck, db: State<Db>) -> Result<(), Strin
     }
     write_package(
         Path::new(&path),
-        &Package {
+        &deduplicate_media(Package {
             manifest: Manifest {
                 format: "flint-set".into(),
-                version: if refs(&deck).iter().any(|name| {
-                    name.ends_with(".gif") || name.ends_with(".webm") || name.ends_with(".mp4")
-                }) {
-                    3
-                } else if deck
-                    .cards
-                    .iter()
-                    .any(|c| c.question_audio.is_some() || c.answer_audio.is_some())
-                {
-                    2
-                } else {
-                    1
-                },
+                metadata: FormatMetadata { format_version: Some(4), format_name: Some("Sonata".into()), created_with_flint_version: Some(env!("CARGO_PKG_VERSION").into()), minimum_flint_version: Some("2.0.0".into()) },
+                version: 4,
                 deck,
             },
             media,
-        },
+        }),
     )
 }
 #[tauri::command]
-pub fn preview_flint(path: String, pending: State<PendingSet>) -> Result<Preview, String> {
-    let package = read_package(Path::new(&path))?;
+pub fn preview_flint(path: String, repair: Option<bool>, pending: State<PendingSet>) -> Result<Preview, String> {
+    let package = (if repair.unwrap_or(false) { read_package_with_repair(Path::new(&path), true) } else { read_package(Path::new(&path)) }).map_err(|e| {
+        if serde_json::from_str::<serde_json::Value>(&e).is_ok() { e } else {
+            serde_json::json!({"kind":"corrupt","detail":e,"repairable":false}).to_string()
+        }
+    })?;
     let deck = package.manifest.deck.clone();
+    let metadata = FormatMetadata { format_version: Some(package.manifest.version), format_name: format_name(package.manifest.version).map(str::to_string), ..package.manifest.metadata.clone() };
     let token = Uuid::new_v4().to_string();
     let preview_names: HashSet<_> = deck
         .cover_image
@@ -420,6 +522,7 @@ pub fn preview_flint(path: String, pending: State<PendingSet>) -> Result<Preview
                 .chain(c.answer_audio.iter())
                 .chain(c.question_video.iter())
                 .chain(c.answer_video.iter())
+                .chain(c.structure.as_ref().into_iter().flat_map(structured::image_refs))
         }))
         .collect();
     let media = package
@@ -429,7 +532,7 @@ pub fn preview_flint(path: String, pending: State<PendingSet>) -> Result<Preview
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     *pending.0.lock().map_err(|e| e.to_string())? = Some((token.clone(), package));
-    Ok(Preview { token, deck, media })
+    Ok(Preview { token, deck, media, metadata })
 }
 #[tauri::command]
 pub fn cancel_flint(token: String, pending: State<PendingSet>) -> Result<(), String> {
@@ -455,7 +558,7 @@ fn import_package(package: &Package, db: &Db) -> Result<Deck, String> {
         .collect();
     if let Some(meta) = deck.meta.as_object_mut() {
         meta.remove("deletedAt");
-        meta.insert("archived".into(), false.into());
+        meta.remove("archived"); // Legacy packages return archived content to Library.
         if let Some(stars) = meta.get_mut("starredCards").and_then(|v| v.as_array_mut()) {
             *stars = stars
                 .iter()
@@ -496,6 +599,7 @@ fn import_package(package: &Package, db: &Db) -> Result<Deck, String> {
                     .chain(c.answer_audio.iter_mut())
                     .chain(c.question_video.iter_mut())
                     .chain(c.answer_video.iter_mut())
+                    .chain(c.structure.as_mut().into_iter().flat_map(structured::image_muts))
             }))
         {
             if let Some(new) = mapped.get(name) {
@@ -580,6 +684,7 @@ fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<P
                     prior.answer_audio = incoming.answer_audio;
                     prior.question_video = incoming.question_video;
                     prior.answer_video = incoming.answer_video;
+                    prior.structure = incoming.structure;
                 }
                 if let Some(stars) = deck
                     .meta
@@ -611,6 +716,7 @@ fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<P
                 .chain(c.answer_audio.iter())
                 .chain(c.question_video.iter())
                 .chain(c.answer_video.iter())
+                .chain(c.structure.as_ref().into_iter().flat_map(structured::image_refs))
         }))
         .cloned()
         .collect();
@@ -618,6 +724,7 @@ fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<P
         manifest: Manifest {
             format: package.manifest.format.clone(),
             version: package.manifest.version,
+            metadata: package.manifest.metadata.clone(),
             deck,
         },
         media: package
@@ -633,6 +740,42 @@ fn resolve_choices(package: &Package, choices: Vec<DuplicateChoice>) -> Result<P
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    fn raw_fixture(path: &Path, manifest: &serde_json::Value, media: &HashMap<String,Vec<u8>>) {
+        let mut zip=ZipWriter::new(fs::File::create(path).unwrap());
+        let options=SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("manifest.json",options).unwrap();zip.write_all(&serde_json::to_vec(manifest).unwrap()).unwrap();
+        for(name,bytes) in media {zip.start_file(format!("media/{name}"),options).unwrap();zip.write_all(bytes).unwrap();}
+        zip.finish().unwrap();
+    }
+    #[test]
+    fn musical_identity_uses_historical_version_never_contents_or_display_name() {
+        let dir=tempdir().unwrap();let path=dir.path().join("old.flint");let source=fixture();
+        let mut raw=serde_json::to_value(&source.manifest).unwrap();
+        for version in 1..=4 {raw["version"]=serde_json::json!(version);raw_fixture(&path,&raw,&source.media);assert_eq!(read_package(&path).unwrap().manifest.version,version);}
+        assert_eq!(format_name(1),Some("Prelude"));assert_eq!(format_name(4),Some("Sonata"));assert_eq!(format_name(8),Some("Rhapsody"));assert_eq!(format_name(9),None);
+        raw["formatName"]=serde_json::json!("Fake");raw["formatVersion"]=serde_json::json!(5);raw["version"]=serde_json::json!(5);raw["minimumFlintVersion"]=serde_json::json!("2.3.0");
+        raw_fixture(&path,&raw,&source.media);
+        let issue:serde_json::Value=serde_json::from_str(&read_package(&path).err().unwrap()).unwrap();assert_eq!(issue["kind"],"unsupported");assert_eq!(issue["version"],5);assert_eq!(issue["minimumFlintVersion"],"2.3.0");
+        raw.as_object_mut().unwrap().remove("version");raw.as_object_mut().unwrap().remove("formatVersion");raw_fixture(&path,&raw,&source.media);assert!(read_package(&path).is_err());
+    }
+    #[test]
+    fn repair_restores_only_missing_derived_metadata_and_never_modifies_original() {
+        let dir=tempdir().unwrap();let path=dir.path().join("repair.flint");let source=fixture();let mut raw=serde_json::to_value(&source.manifest).unwrap();
+        raw["deck"]["cards"][0].as_object_mut().unwrap().remove("accuracy");raw_fixture(&path,&raw,&source.media);let original=fs::read(&path).unwrap();
+        let issue:serde_json::Value=serde_json::from_str(&read_package(&path).err().unwrap()).unwrap();assert_eq!(issue["repairable"],true);
+        let repaired=read_package_with_repair(&path,true).unwrap();assert_eq!(repaired.manifest.deck.cards[0].question,source.manifest.deck.cards[0].question);assert_eq!(repaired.media,source.media);assert_eq!(fs::read(&path).unwrap(),original);
+        raw["deck"]["cards"][0].as_object_mut().unwrap().remove("answer");raw_fixture(&path,&raw,&source.media);assert!(read_package_with_repair(&path,true).is_err());
+        fs::write(&path,b"not a Flint file").unwrap();let issue:serde_json::Value=serde_json::from_str(&read_package(&path).err().unwrap()).unwrap();assert_eq!(issue["kind"],"not-flint");
+    }
+    #[test]
+    fn compressed_packages_deduplicate_exact_bytes_without_transcoding() {
+        let dir=tempdir().unwrap();let path=dir.path().join("compressed.flint");let mut source=fixture();
+        let original=source.media["cover.png"].clone();source.media.remove("answer.webp");source.media.insert("copy.png".into(),original.clone());source.manifest.deck.cards[0].answer_image=Some("copy.png".into());source.manifest.deck.cards[0].question="Repeated text ".repeat(600);
+        let package=deduplicate_media(source);assert_eq!(package.media.len(),1);validate(&package).unwrap();
+        let raw_size=serde_json::to_vec(&package.manifest).unwrap().len()+original.len();write_package(&path,&package).unwrap();let compressed=fs::metadata(&path).unwrap().len() as usize;
+        assert!(compressed<raw_size);let restored=read_package(&path).unwrap();assert_eq!(restored.media.values().next().unwrap(),&original);
+        eprintln!("Lossless text + PNG fixture: {raw_size} bytes -> {compressed} bytes; duplicate PNG stored once");
+    }
     fn fixture() -> Package {
         let png = include_bytes!("../icons/32x32.png").to_vec();
         let mut webp = std::io::Cursor::new(Vec::new());
@@ -650,6 +793,7 @@ mod tests {
             manifest: Manifest {
                 format: "flint-set".into(),
                 version: 1,
+                metadata: FormatMetadata::default(),
                 deck,
             },
             media: HashMap::from([
@@ -801,6 +945,132 @@ mod tests {
             assert!(!media_dir.join(name).exists());
         }
         package.manifest.version = 2;
+        assert!(write_package(&path, &package).is_err());
+    }
+    #[test]
+    fn archive_retirement_migration_preserves_legacy_cards_and_folders() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.sqlite3");
+        let mut c = open_db(&path).unwrap();
+        let package = fixture();
+        persist_deck(&mut c, &package.manifest.deck, None).unwrap();
+        c.execute_batch("UPDATE decks SET metadata=json_set(metadata,'$.archived',json('true'),'$.folder','Science/Cells'); ALTER TABLE cards DROP COLUMN structure_json; PRAGMA user_version=8;").unwrap();
+        drop(c);
+        let c = open_db(&path).unwrap();
+        let metadata: String = c
+            .query_row("SELECT metadata FROM decks", [], |r| r.get(0))
+            .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+        assert!(metadata.get("archived").is_none());
+        assert_eq!(metadata["folder"], "Science/Cells");
+        let answer: String = c
+            .query_row("SELECT answer FROM cards", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(answer, "față");
+    }
+    #[test]
+    fn structured_v4_roundtrip_reopen_backup_and_media_retention() {
+        let dir = tempdir().unwrap();
+        let mut package = fixture();
+        package.manifest.version = 4;
+        let card = &mut package.manifest.deck.cards[0];
+        card.structure = Some(
+            serde_json::json!({"version":1,"type":"occlusion","title":"Cell","image":"answer.webp","regions":[{"id":"nucleus","x":0.1,"y":0.2,"width":0.3,"height":0.4,"answer":"Nucleus","anchor":{"x":0.8,"y":0.7},"color":"#8b78ff","socket":"bottom"}]}),
+        );
+        card.question.clear();
+        card.answer.clear();
+        card.question_image = None;
+        card.answer_image = None;
+        let mut table = card.clone();
+        table.id = "table-card".into();
+        table.structure = Some(
+            serde_json::json!({"version":1,"type":"table","title":"Elements","rows":[{"id":"r0","size":44},{"id":"r1","size":55}],"columns":[{"id":"c0","size":160},{"id":"c1","size":210}],"cells":{"r0:c0":"Element","r0:c1":"Symbol","r1:c0":"Hydrogen","r1:c1":"H"},"headerRow":true,"headerColumn":true,"gridLines":false}),
+        );
+        table.structure.as_mut().unwrap()["formats"] = serde_json::json!({"r1:c1":{"bold":true,"align":"center","background":"#123456","runs":[{"start":0,"end":1,"style":{"italic":true,"color":"#abcdef"}}]}});
+        table.structure.as_mut().unwrap()["rows"][1]["name"] = "Named row".into();
+        table.structure.as_mut().unwrap()["columns"][0]["name"] = "".into();
+        table.structure.as_mut().unwrap()["extension"] = serde_json::json!({"preserve":"unknown structured metadata"});
+        table.structure.as_mut().unwrap()["images"] = serde_json::json!({"r1:c0":"answer.webp"});
+        table.structure.as_mut().unwrap()["imageLayouts"] = serde_json::json!({"r1:c0":{"x":12,"y":9,"width":96,"crop":{"x":0.1,"y":0.2,"width":0.7,"height":0.6}}});
+        table.structure.as_mut().unwrap()["textPositions"] = serde_json::json!({"r1:c1":{"x":14,"y":8}});
+        package.manifest.deck.cards.push(table);
+        let path = dir.path().join("structured.flint");
+        write_package(&path, &package).unwrap();
+        let parsed = read_package(&path).unwrap();
+        assert_eq!(parsed.media, package.media);
+        assert_eq!(
+            parsed.manifest.deck.cards[0].structure,
+            package.manifest.deck.cards[0].structure
+        );
+        assert_eq!(
+            parsed.manifest.deck.cards[1].structure,
+            package.manifest.deck.cards[1].structure
+        );
+        let media = dir.path().join("media");
+        fs::create_dir(&media).unwrap();
+        let db_path = dir.path().join("library.sqlite3");
+        let db = Db {
+            conn: Mutex::new(open_db(&db_path).unwrap()),
+            path: db_path.clone(),
+            media_dir: media.clone(),
+        };
+        let mut imported = import_package(&parsed, &db).unwrap();
+        let source = structured::image(imported.cards[0].structure.as_ref().unwrap())
+            .unwrap()
+            .to_string();
+        assert_ne!(source, "answer.webp");
+        assert_eq!(imported.cards[1].structure.as_ref().unwrap()["images"]["r1:c0"],source);
+        assert_eq!(
+            fs::read(media.join(&source)).unwrap(),
+            package.media["answer.webp"]
+        );
+        let mut duplicate = imported.cards[0].clone();
+        duplicate.id = "copy-card".into();
+        imported.cards.push(duplicate);
+        imported.cards.swap(0, 1);
+        {
+            let mut c = db.conn.lock().unwrap();
+            persist_deck(&mut c, &imported, None).unwrap();
+            c.execute_batch("PRAGMA wal_checkpoint(FULL)").unwrap();
+        }
+        let backup = dir.path().join("structured.flintbackup");
+        write_backup(&db_path, Some(&media), &backup, "0.1.9").unwrap();
+        let mut zip = ZipArchive::new(fs::File::open(backup).unwrap()).unwrap();
+        let mut bytes = Vec::new();
+        zip.by_name(&format!("media/{source}"))
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes, package.media["answer.webp"]);
+        drop(db);
+        let mut c = open_db(&db_path).unwrap();
+        for card in &imported.cards {
+            let saved: String = c
+                .query_row(
+                    "SELECT structure_json FROM cards WHERE id=?",
+                    [&card.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&saved).unwrap(),
+                card.structure.clone().unwrap()
+            );
+        }
+        let before = imported.cards.clone();
+        imported.cards[0].structure.as_mut().unwrap()["version"] = serde_json::json!(99);
+        assert!(persist_deck(&mut c, &imported, None).is_err());
+        imported.cards = before;
+        // Deleting one referencing card must not remove media used by its duplicate.
+        imported.cards.remove(1);
+        persist_deck(&mut c, &imported, None).unwrap();
+        trash::prune(&mut c, &media, Utc::now()).unwrap();
+        assert!(media.join(&source).exists());
+        imported.meta["deletedAt"] = (Utc::now() - Duration::days(8)).to_rfc3339().into();
+        persist_details(&c, &imported).unwrap();
+        trash::prune(&mut c, &media, Utc::now()).unwrap();
+        assert!(!media.join(&source).exists());
+        package.manifest.version = 3;
         assert!(write_package(&path, &package).is_err());
     }
     #[test]

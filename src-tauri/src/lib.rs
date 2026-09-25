@@ -10,9 +10,12 @@ use std::{
 };
 use tauri::{Emitter, Manager, State};
 mod audio;
+mod backups;
 mod folders;
 mod multimedia;
+mod media_lifecycle;
 mod portable;
+mod structured;
 mod trash;
 use audio::save_audio_bytes;
 use portable::{cancel_flint, export_flint, import_flint, preview_flint, PendingSet};
@@ -38,7 +41,7 @@ fn opened_sets(state: State<OpenedSets>) -> Result<Vec<String>, String> {
 }
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 10;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +65,8 @@ pub struct Card {
     pub answer_audio: Option<String>,
     pub question_video: Option<String>,
     pub answer_video: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structure: Option<serde_json::Value>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -117,7 +122,7 @@ fn open_db(path: &Path) -> Result<Connection, String> {
     Ok(c)
 }
 fn migrate(c: &Connection) -> Result<(), String> {
-    debug_assert_eq!(SCHEMA_VERSION, 8);
+    debug_assert_eq!(SCHEMA_VERSION, 10);
     let current: i64 = c
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
@@ -222,6 +227,12 @@ CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck_id);CREATE INDEX IF NOT 
     if current < 8 {
         c.execute_batch("BEGIN IMMEDIATE; ALTER TABLE cards ADD COLUMN question_video TEXT; ALTER TABLE cards ADD COLUMN answer_video TEXT; PRAGMA user_version=8; COMMIT;").map_err(|e| e.to_string())?;
     }
+    if current < 9 {
+        c.execute_batch("BEGIN IMMEDIATE; ALTER TABLE cards ADD COLUMN structure_json TEXT CHECK(structure_json IS NULL OR json_valid(structure_json)); UPDATE decks SET metadata=json_remove(metadata,'$.archived') WHERE json_valid(metadata); PRAGMA user_version=9; COMMIT;").map_err(|e| e.to_string())?;
+    }
+    if current < 10 {
+        c.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS media_protected(name TEXT PRIMARY KEY); PRAGMA user_version=10; COMMIT;").map_err(|e|e.to_string())?;
+    }
     Ok(())
 }
 
@@ -296,6 +307,18 @@ fn row_card(r: &rusqlite::Row) -> rusqlite::Result<Card> {
         answer_audio: r.get(16)?,
         question_video: r.get(17)?,
         answer_video: r.get(18)?,
+        structure: r
+            .get::<_, Option<String>>(19)?
+            .map(|json| {
+                serde_json::from_str(&json).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        19,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })
+            })
+            .transpose()?,
     })
 }
 
@@ -322,7 +345,7 @@ fn list_decks(db: State<Db>) -> Result<Vec<Deck>, String> {
     for row in rows {
         let (id, title, subject, color, favorite, last_studied, cover_image, metadata, created_at) =
             row.map_err(|e| e.to_string())?;
-        let mut st=c.prepare("SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio,question_video,answer_video FROM cards WHERE deck_id=? ORDER BY position,created_at,rowid").map_err(|e|e.to_string())?;
+        let mut st=c.prepare("SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio,question_video,answer_video,structure_json FROM cards WHERE deck_id=? ORDER BY position,created_at,rowid").map_err(|e|e.to_string())?;
         let cards = st
             .query_map([&id], row_card)
             .map_err(|e| e.to_string())?
@@ -361,7 +384,7 @@ fn persist_details(c: &Connection, deck: &Deck) -> Result<(), String> {
     c.execute("INSERT OR IGNORE INTO media_retired(deck_id,name) SELECT id,cover_image FROM decks WHERE id=? AND cover_image IS NOT NULL",[&deck.id]).map_err(|e|e.to_string())?;
     let changed = c
         .execute(
-            "UPDATE decks SET favorite=?,cover_image=?,metadata=?,modified_at=? WHERE id=?",
+            "UPDATE decks SET favorite=?,cover_image=?,metadata=json_remove(?,'$.archived'),modified_at=? WHERE id=?",
             params![
                 deck.favorite,
                 deck.cover_image,
@@ -382,13 +405,21 @@ fn export_text(path: String, text: String) -> Result<(), String> {
 }
 
 fn persist_deck(c: &mut Connection, deck: &Deck, source: Option<&str>) -> Result<(), String> {
+    for card in &deck.cards {
+        if let Some(value) = &card.structure {
+            structured::validate(value)?;
+        }
+    }
     let tx = c.transaction().map_err(|e| e.to_string())?;
     folders::register(&tx, deck.meta["folder"].as_str().unwrap_or(""))?;
-    tx.execute("INSERT OR IGNORE INTO media_retired(deck_id,name) SELECT id,cover_image FROM decks WHERE id=?1 AND cover_image IS NOT NULL UNION SELECT deck_id,question_image FROM cards WHERE deck_id=?1 AND question_image IS NOT NULL UNION SELECT deck_id,answer_image FROM cards WHERE deck_id=?1 AND answer_image IS NOT NULL UNION SELECT deck_id,question_audio FROM cards WHERE deck_id=?1 AND question_audio IS NOT NULL UNION SELECT deck_id,answer_audio FROM cards WHERE deck_id=?1 AND answer_audio IS NOT NULL UNION SELECT deck_id,question_video FROM cards WHERE deck_id=?1 AND question_video IS NOT NULL UNION SELECT deck_id,answer_video FROM cards WHERE deck_id=?1 AND answer_video IS NOT NULL",[&deck.id]).map_err(|e|e.to_string())?;
+    for name in structured::stored_images(&tx,Some(&deck.id))? {
+        tx.execute("INSERT OR IGNORE INTO media_retired(deck_id,name) VALUES(?,?)",params![deck.id,name]).map_err(|e|e.to_string())?;
+    }
+    tx.execute("INSERT OR IGNORE INTO media_retired(deck_id,name) SELECT id,cover_image FROM decks WHERE id=?1 AND cover_image IS NOT NULL UNION SELECT deck_id,question_image FROM cards WHERE deck_id=?1 AND question_image IS NOT NULL UNION SELECT deck_id,answer_image FROM cards WHERE deck_id=?1 AND answer_image IS NOT NULL UNION SELECT deck_id,question_audio FROM cards WHERE deck_id=?1 AND question_audio IS NOT NULL UNION SELECT deck_id,answer_audio FROM cards WHERE deck_id=?1 AND answer_audio IS NOT NULL UNION SELECT deck_id,question_video FROM cards WHERE deck_id=?1 AND question_video IS NOT NULL UNION SELECT deck_id,json_extract(structure_json,'$.image') FROM cards WHERE deck_id=?1 AND json_extract(structure_json,'$.type')='occlusion' UNION SELECT deck_id,answer_video FROM cards WHERE deck_id=?1 AND answer_video IS NOT NULL",[&deck.id]).map_err(|e|e.to_string())?;
     let now = Utc::now().to_rfc3339();
     tx.execute("INSERT INTO decks(id,title,subject,color,favorite,last_studied,cover_image,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,subject=excluded.subject,color=excluded.color,favorite=excluded.favorite,last_studied=excluded.last_studied,cover_image=excluded.cover_image,modified_at=excluded.modified_at",params![deck.id,deck.title,deck.subject,deck.color,deck.favorite,deck.last_studied,deck.cover_image,deck.created_at.as_deref().unwrap_or(&now),now]).map_err(|e|e.to_string())?;
     tx.execute(
-        "UPDATE decks SET metadata=? WHERE id=?",
+        "UPDATE decks SET metadata=json_remove(?,'$.archived') WHERE id=?",
         params![deck.meta.to_string(), deck.id],
     )
     .map_err(|e| e.to_string())?;
@@ -413,13 +444,14 @@ fn persist_deck(c: &mut Connection, deck: &Deck, source: Option<&str>) -> Result
     for (position, x) in deck.cards.iter().enumerate() {
         tx.execute("INSERT INTO cards(id,deck_id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET question=excluded.question,answer=excluded.answer,status=excluded.status,accuracy=excluded.accuracy,due_at=excluded.due_at,interval_days=excluded.interval_days,ease=excluded.ease,repetitions=excluded.repetitions,lapses=excluded.lapses,last_reviewed=excluded.last_reviewed,source_name=excluded.source_name,source_location=excluded.source_location,question_image=excluded.question_image,answer_image=excluded.answer_image,modified_at=excluded.modified_at",params![x.id,deck.id,x.question,x.answer,x.status,x.accuracy,x.due_at,x.interval_days,x.ease,x.repetitions,x.lapses,x.last_reviewed,x.source_name,x.source_location,x.question_image,x.answer_image,now,now]).map_err(|e|e.to_string())?;
         tx.execute(
-            "UPDATE cards SET position=?,question_audio=?,answer_audio=?,question_video=?,answer_video=? WHERE id=? AND deck_id=?",
+            "UPDATE cards SET position=?,question_audio=?,answer_audio=?,question_video=?,answer_video=?,structure_json=? WHERE id=? AND deck_id=?",
             params![
                 position as i64,
                 x.question_audio,
                 x.answer_audio,
                 x.question_video,
                 x.answer_video,
+                x.structure.as_ref().map(serde_json::Value::to_string),
                 x.id,
                 deck.id
             ],
@@ -489,9 +521,9 @@ fn record_review(input: ReviewInput, db: State<Db>) -> Result<Schedule, String> 
 fn study_queue(kind: String, db: State<Db>) -> Result<Vec<Card>, String> {
     let c = db.conn.lock().map_err(|e| e.to_string())?;
     let sql = if kind == "weak" {
-        "SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio,question_video,answer_video FROM cards ORDER BY (lapses*20+(100-accuracy)+CASE WHEN datetime(due_at)<=datetime('now') THEN 30 ELSE 0 END) DESC LIMIT 100"
+        "SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio,question_video,answer_video,structure_json FROM cards ORDER BY (lapses*20+(100-accuracy)+CASE WHEN datetime(due_at)<=datetime('now') THEN 30 ELSE 0 END) DESC LIMIT 100"
     } else {
-        "SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio,question_video,answer_video FROM cards WHERE datetime(due_at)<=datetime('now') ORDER BY due_at LIMIT 100"
+        "SELECT id,question,answer,status,accuracy,due_at,interval_days,ease,repetitions,lapses,last_reviewed,source_name,source_location,question_image,answer_image,question_audio,answer_audio,question_video,answer_video,structure_json FROM cards WHERE datetime(due_at)<=datetime('now') ORDER BY due_at LIMIT 100"
     };
     let mut s = c.prepare(sql).map_err(|e| e.to_string())?;
     let cards = s
@@ -508,6 +540,9 @@ fn write_backup(
     dest: &Path,
     version: &str,
 ) -> Result<(), String> {
+    write_backup_with_preferences(db_path,media_dir,dest,version,None)
+}
+fn write_backup_with_preferences(db_path:&Path,media_dir:Option<&Path>,dest:&Path,version:&str,preferences:Option<&str>)->Result<(),String>{
     let file = fs::File::create(dest).map_err(|e| e.to_string())?;
     let mut z = zip::ZipWriter::new(file);
     let opt = zip::write::SimpleFileOptions::default()
@@ -525,22 +560,26 @@ fn write_backup(
     .map_err(|e| e.to_string())?;
     z.start_file("flint.sqlite3", opt)
         .map_err(|e| e.to_string())?;
-    z.write_all(&fs::read(db_path).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    std::io::copy(&mut fs::File::open(db_path).map_err(|e|e.to_string())?,&mut z).map_err(|e|e.to_string())?;
+    if let Some(preferences)=preferences {
+        let value:serde_json::Value=serde_json::from_str(preferences).map_err(|e|e.to_string())?;
+        if !value.as_object().is_some_and(|p|p.iter().all(|(k,v)|k.starts_with("flint-")&&v.is_string())){return Err("Invalid preferences snapshot".into());}
+        z.start_file("preferences.json",opt).map_err(|e|e.to_string())?;z.write_all(preferences.as_bytes()).map_err(|e|e.to_string())?;
+    }
     if let Some(media_dir) = media_dir {
         if media_dir.exists() {
             for entry in fs::read_dir(media_dir).map_err(|e| e.to_string())? {
-                let path = entry.map_err(|e| e.to_string())?.path();
-                if !path.is_file() {
+                let entry=entry.map_err(|e|e.to_string())?;
+                if !entry.file_type().map_err(|e|e.to_string())?.is_file() {
                     continue;
                 }
+                let path=entry.path();
                 let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                     continue;
                 };
                 z.start_file(format!("media/{name}"), opt)
                     .map_err(|e| e.to_string())?;
-                z.write_all(&fs::read(path).map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())?;
+                std::io::copy(&mut fs::File::open(path).map_err(|e|e.to_string())?,&mut z).map_err(|e|e.to_string())?;
             }
         }
     }
@@ -573,53 +612,20 @@ fn prepare_update_backup(preferences: String, db: State<Db>) -> Result<(), Strin
     Ok(())
 }
 #[tauri::command]
-fn create_backup(path: String, db: State<Db>) -> Result<(), String> {
-    db.conn
+fn create_backup(path: String, preferences: Option<String>, db: State<Db>) -> Result<(), String> {
+    let conn=db.conn
         .lock()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    conn
         .execute_batch("PRAGMA wal_checkpoint(FULL)")
         .map_err(|e| e.to_string())?;
     let p = PathBuf::from(path);
     if p.exists() {
         return Err("A backup already exists at that location".into());
     }
-    write_backup(&db.path, Some(&db.media_dir), &p, env!("CARGO_PKG_VERSION"))
-}
-#[tauri::command]
-fn restore_backup(path: String, db: State<Db>) -> Result<(), String> {
-    let f = fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut z = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
-    let mut entry = z
-        .by_name("flint.sqlite3")
-        .map_err(|_| "Invalid Flint backup".to_string())?;
-    let tmp = db.path.with_extension("restore.tmp");
-    let mut out = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-    std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
-    drop(out);
-    drop(entry);
-    drop(open_db(&tmp)?);
-    db.conn
-        .lock()
-        .map_err(|e| e.to_string())?
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .map_err(|e| e.to_string())?;
-    fs::copy(&db.path, db.path.with_extension("before-restore.sqlite3"))
-        .map_err(|e| e.to_string())?;
-    fs::copy(tmp, &db.path).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&db.media_dir).map_err(|e| e.to_string())?;
-    for index in 0..z.len() {
-        let mut media = z.by_index(index).map_err(|e| e.to_string())?;
-        let name = media.name().to_string();
-        let Some(file_name) = name.strip_prefix("media/") else {
-            continue;
-        };
-        if file_name.is_empty() || file_name.contains('/') || file_name.contains('\\') {
-            return Err("Invalid media path in Flint backup".into());
-        }
-        let mut output =
-            fs::File::create(db.media_dir.join(file_name)).map_err(|e| e.to_string())?;
-        std::io::copy(&mut media, &mut output).map_err(|e| e.to_string())?;
-    }
+    let temporary=tempfile::NamedTempFile::new_in(p.parent().ok_or("Invalid backup location")?).map_err(|e|e.to_string())?;
+    write_backup_with_preferences(&db.path, Some(&db.media_dir), temporary.path(), env!("CARGO_PKG_VERSION"),preferences.as_deref())?;
+    temporary.persist_noclobber(&p).map_err(|e|e.to_string())?;
     Ok(())
 }
 #[tauri::command]
@@ -696,12 +702,30 @@ fn save_media_bytes(data: Vec<u8>, extension: String, db: State<Db>) -> Result<S
     fs::write(db.media_dir.join(&name), data).map_err(|e| e.to_string())?;
     Ok(name)
 }
-#[tauri::command]
-fn media_path(name: String, db: State<Db>) -> Result<String, String> {
-    if name.contains('/') || name.contains('\\') {
+fn managed_media_path(media_dir: &Path, name: &str) -> Result<PathBuf, String> {
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.contains("..") {
         return Err("Invalid media reference".into());
     }
-    Ok(db.media_dir.join(name).to_string_lossy().to_string())
+    let entry = media_dir.join(name);
+    // Only a regular, direct child of managed storage is eligible. Do not follow
+    // file symlinks to user originals or other files outside managed storage.
+    let metadata = fs::symlink_metadata(&entry).map_err(|e| e.to_string())?;
+    if !metadata.file_type().is_file() {
+        return Err("Invalid media reference".into());
+    }
+    // Windows package virtualization can resolve a file into LocalCache while
+    // canonicalizing its logical AppData directory still returns AppData.
+    // Comparing those two canonical parent strings rejects legitimate uploads.
+    // Validate the direct entry first, then authorize its actual resolved file.
+    fs::canonicalize(entry).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn media_path(name: String, db: State<Db>, app: tauri::AppHandle) -> Result<String, String> {
+    let path = managed_media_path(&db.media_dir, &name)?;
+    // Authorize the resolved managed file, not the user's original upload path.
+    // This also handles profile-specific paths and Windows canonical path prefixes.
+    app.asset_protocol_scope().allow_file(&path).map_err(|e|e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 #[tauri::command]
 fn save_study_session(
@@ -748,6 +772,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(OpenedSets(Mutex::new(Vec::new())))
         .manage(PendingSet::default())
+        .manage(backups::PendingBackup::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             queue_sets(
                 app,
@@ -773,6 +798,7 @@ pub fn run() {
             queue_sets(app.handle(), std::env::args().skip(1).collect());
             let dir = app.path().app_data_dir()?;
             fs::create_dir_all(&dir)?;
+            backups::apply_pending(&dir).map_err(std::io::Error::other)?;
             let path = dir.join("flint.sqlite3");
             let media_dir = dir.join("media");
             fs::create_dir_all(&media_dir)?;
@@ -799,13 +825,22 @@ pub fn run() {
             record_review,
             study_queue,
             create_backup,
-            restore_backup,
+            backups::preview_backup,
+            backups::queue_backup_restore,
+            backups::restored_preferences,
+            backups::acknowledge_restored_preferences,
             extract_document,
             import_media,
             save_media_bytes,
             save_audio_bytes,
             multimedia::save_video_bytes,
+            multimedia::save_video_poster,
+            multimedia::video_poster,
             multimedia::library_storage_bytes,
+            media_lifecycle::sync_draft_media,
+            media_lifecycle::scan_unused_media,
+            media_lifecycle::cleanup_unused_media,
+            media_lifecycle::cleanup_retired_media,
             folders::relocate_library_folder,
             media_path,
             save_study_session,
@@ -837,6 +872,25 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    #[test]
+    fn managed_media_resolves_regular_files_and_rejects_unsafe_references() {
+        let dir=tempdir().unwrap();
+        fs::write(dir.path().join("image with spaces.png"),b"image").unwrap();
+        fs::create_dir(dir.path().join("directory.png")).unwrap();
+        let resolved=managed_media_path(dir.path(),"image with spaces.png").unwrap();
+        assert_eq!(fs::read(resolved).unwrap(),b"image");
+        for name in ["", "../original.png", "..\\original.png", "C:\\original.png", "image.png:stream", "directory.png", "missing.png"] {
+            assert!(managed_media_path(dir.path(),name).is_err(),"{name}");
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn managed_media_rejects_symlinks_to_source_files() {
+        let dir=tempdir().unwrap();
+        let original=tempfile::NamedTempFile::new().unwrap();
+        std::os::unix::fs::symlink(original.path(),dir.path().join("linked.png")).unwrap();
+        assert!(managed_media_path(dir.path(),"linked.png").is_err());
+    }
     fn fresh() -> Schedule {
         Schedule {
             state: "New".into(),
@@ -921,6 +975,7 @@ mod tests {
             answer_audio: None,
             question_video: None,
             answer_video: None,
+            structure: None,
         };
         let mut deck = Deck {
             id: "biology".into(),
@@ -1019,7 +1074,7 @@ mod tests {
         c.execute("INSERT INTO decks(id,title,subject,color,favorite,created_at,modified_at)VALUES('bio','Built-in fixture','','#fff',0,'x','x')", []).unwrap();
         c.execute("INSERT INTO decks(id,title,subject,color,favorite,created_at,modified_at)VALUES('user-deck','Biology','','#fff',0,'x','x')", []).unwrap();
         // Reconstruct the pre-video schema before replaying older migrations.
-        c.execute_batch("ALTER TABLE cards DROP COLUMN question_video; ALTER TABLE cards DROP COLUMN answer_video;").unwrap();
+        c.execute_batch("ALTER TABLE cards DROP COLUMN structure_json; ALTER TABLE cards DROP COLUMN question_video; ALTER TABLE cards DROP COLUMN answer_video;").unwrap();
         c.pragma_update(None, "user_version", 2).unwrap();
         drop(c);
         let reopened = open_db(&p).unwrap();

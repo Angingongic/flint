@@ -58,13 +58,13 @@ describe("Learn session lifecycle", () => {
   it("separates skipped answers and bounds reinforcement", () => {
     const cards = [newCard("a", "b")];
     let state = beginLearn(cards);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       state = answerLearn(state, "DIDNT_KNOW");
       expect(learnProgress(state)).toBe(0);
       state = continueWave(state);
     }
-    expect(state.didntKnow?.[cards[0].id]).toBe(3);
-    expect(state.mistakes[cards[0].id]).toBe(6);
+    expect(state.didntKnow?.[cards[0].id]).toBe(4);
+    expect(state.mistakes[cards[0].id]).toBe(8);
     expect(learnComplete(state)).toBe(true);
   });
   it("reintroduces recognition before recall and restarts at zero without mutating cards", () => {
@@ -74,6 +74,7 @@ describe("Learn session lifecycle", () => {
     state = continueWave(answerLearn(state, "DIDNT_KNOW"));
     expect(state.queue.map((q) => q.kind)).toEqual(["choice", "typed"]);
     state = answerLearn(answerLearn(state, true), true);
+    state = continueWave(state);
     expect(learnComplete(state)).toBe(true);
     expect(learnProgress(beginLearn(cards))).toBe(0);
     expect(JSON.stringify(cards)).toBe(before);

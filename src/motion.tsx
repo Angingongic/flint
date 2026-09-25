@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { usePreference } from "./preferences";
 
 export const motion = {
   micro: 120,
@@ -12,6 +13,7 @@ export const motion = {
   phase: 1100,
 } as const;
 export function useReducedMotion() {
+  const [preferred]=usePreference<boolean>("reduced-motion",false);
   const [reduced, setReduced] = useState(
     () =>
       typeof matchMedia === "function" &&
@@ -24,7 +26,7 @@ export function useReducedMotion() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-  return reduced;
+  return reduced || preferred;
 }
 export function Progress({ value, label }: { value: number; label: string }) {
   return (
@@ -55,6 +57,8 @@ export function MotionPage({
     reduced = useReducedMotion();
   useLayoutEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
+  }, [route]);
+  useLayoutEffect(() => {
     const animation = ref.current?.animate?.(
       [
         { opacity: 0.35, transform: reduced ? "none" : "translateY(6px)" },

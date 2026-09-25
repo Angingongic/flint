@@ -189,6 +189,7 @@ describe("0.1.4a completion", () => {
         }}
       />,
     );
+    fireEvent.click(screen.getByLabelText("Library menu"));
     fireEvent.click(screen.getByRole("button", { name: "Trash" }));
     expect(screen.getByRole("button", { name: "Restore" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Permanently remove" }));

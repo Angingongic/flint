@@ -2,7 +2,6 @@
 .set-heading,
 .viewer-nav,
 .study-options,
-.secondary-modes,
 .edit-card-head,
 .attachment-actions {
   display: flex;
@@ -76,9 +75,6 @@
 .primary-modes span {
   color: var(--muted);
   font-size: 12px;
-}
-.secondary-modes {
-  margin: 16px 0 32px;
 }
 .set-card-list > div {
   display: grid;
@@ -754,11 +750,12 @@ select,
   border-radius: 20px;
   margin: 20px 0 24px;
 }
-.home-resume > .set-cover {
+.home-resume > .set-art {
   width: 150px;
   height: 160px;
   flex-shrink: 0;
   border-radius: 14px;
+  object-fit: cover;
 }
 .home-resume h2 {
   margin: 4px 0 12px;
@@ -972,7 +969,7 @@ select,
     gap: 18px;
     padding: 20px;
   }
-  .home-resume > .set-cover {
+  .home-resume > .set-art {
     width: 100px;
     height: 130px;
   }

@@ -1,14 +1,13 @@
-# Flint 0.1.8
+# Flint 2.0.0
 
-## Multimedia and Library polish
-- Animated GIFs stay animated on either card side. Local MP4/WebM video and direct audio recording join the Insert menu.
-- Flashcards and Learn manage visible-side playback; Test media starts only when Play is pressed.
-- Shared Flint sets preserve supported multimedia with versioned package validation and a subtle .flint source badge.
-- Nested Library folders support ancestor navigation, recursive rename/move and cycle prevention. New Set follows the current folder.
-- Drag previews distinguish reorder edges from containment centers, with shared restrained movement feedback and Custom sorting.
-- Library storage includes database and media, including files retained for Undo.
-- Redo extends existing editing history; number keys select valid visible multiple-choice answers.
+## Flint 2.0 — Everything you know. Reimagined.
 
-Video/audio codec support depends on the operating system. Multimedia attachments are limited to 25 MiB each; portable packages retain the existing 100 MiB total limit. New multimedia packages require Flint 0.1.8 or later.
+Build understanding with Diagrams and Tables, shared visual study layouts, Smart Math, and local deterministic answer suggestions.
 
-Windows installers are not Authenticode-signed (SmartScreen may warn). macOS builds are ad-hoc signed unless Apple credentials are configured and are not notarized by default. Updater signing remains configured in GitHub Actions.
+- Structured cards retain their original images, regions, cells and layout across editing and portable sharing.
+- A cleaner Library puts Favorites in the view dropdown and Trash in its management menu. Archived content returns to the normal Library.
+- Learn retains per-target progress, with resume, restart and shuffle controls.
+- Video imports can cache lightweight posters while preserving original media bytes.
+- Sonata is the fourth Flint set format. Existing Prelude, Aria and Cadence sets remain supported through their numeric format identities.
+
+This is a local QA candidate. Publication is withheld until all required validation and production-app checks are complete.

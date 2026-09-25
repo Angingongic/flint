@@ -33,6 +33,37 @@ pub fn save_video_bytes(data: Vec<u8>, extension: String, db: State<Db>) -> Resu
     fs::write(db.media_dir.join(&name), data).map_err(|e| e.to_string())?;
     Ok(name)
 }
+fn poster_name(name: &str) -> Result<String, String> {
+    let (id, extension) = name.rsplit_once('.').ok_or("Invalid video reference")?;
+    if Uuid::parse_str(id).is_err() || !["mp4", "webm"].contains(&extension) {
+        return Err("Invalid video reference".into());
+    }
+    Ok(format!("{name}.poster.jpg"))
+}
+#[tauri::command]
+pub fn save_video_poster(name: String, data: Vec<u8>, db: State<Db>) -> Result<(), String> {
+    let poster = poster_name(&name)?;
+    if !db.media_dir.join(&name).is_file() || data.len() > 1024 * 1024
+        || !data.starts_with(&[0xff, 0xd8, 0xff]) || !data.ends_with(&[0xff, 0xd9]) {
+        return Err("Invalid video poster".into());
+    }
+    fs::write(db.media_dir.join(poster), data).map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn video_poster(name: String, db: State<Db>) -> Result<Option<String>, String> {
+    let poster = poster_name(&name)?;
+    Ok(db.media_dir.join(&poster).is_file().then_some(poster))
+}
+pub fn remove_poster(media: &Path, name: &str) -> Result<(), String> {
+    if let Ok(poster) = poster_name(name) {
+        match fs::remove_file(media.join(poster)) {
+            Ok(()) => {},
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(())
+}
 pub fn storage_bytes(db_path: &Path, media: &Path) -> Result<u64, String> {
     let mut total = 0;
     for path in [
