@@ -300,7 +300,7 @@ describe("study interactions", () => {
       fireEvent.change(attachments[index], { target: { files: [image] } });
 
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Attaching…" })).toBeNull(),
+      expect(screen.queryAllByRole("button", { name: "Attaching…" })).toHaveLength(0),
     );
 
     fireEvent.change(attachments[1], {
