@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, readFileSync, unlinkSync } from 'node:fs';
+import { writeFileSync, readFileSync, unlinkSync, openSync, closeSync } from 'node:fs';
 
 const tag = process.env.RELEASE_TAG;
 const repo = process.env.GITHUB_REPOSITORY;
@@ -18,16 +18,21 @@ const latest = release.assets.find((a) => a.name === 'latest.json');
 if (!latest) throw Error('Missing latest.json');
 
 const tmp = 'latest.normalized.json';
-execFileSync(
-  'gh',
-  [
-    'api',
-    `repos/${repo}/releases/assets/${latest.id}`,
-    '-H',
-    'Accept: application/octet-stream',
-  ],
-  { stdio: ['ignore', require('node:fs').openSync(tmp, 'w'), 'inherit'] },
-);
+const output = openSync(tmp, 'w');
+try {
+  execFileSync(
+    'gh',
+    [
+      'api',
+      `repos/${repo}/releases/assets/${latest.id}`,
+      '-H',
+      'Accept: application/octet-stream',
+    ],
+    { stdio: ['ignore', output, 'inherit'] },
+  );
+} finally {
+  closeSync(output);
+}
 const metadata = JSON.parse(readFileSync(tmp, 'utf8'));
 
 for (const [platform, item] of Object.entries(metadata.platforms || {})) {
