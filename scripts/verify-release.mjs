@@ -16,8 +16,14 @@ for (const required of ['windows-x86_64','darwin-aarch64','darwin-x86_64']) if (
 if (!metadata.notes?.trim()) throw Error('Updater release notes are empty');
 for (const platform of Object.keys(metadata.platforms)) {
   const item = metadata.platforms?.[platform];
-  if (!item?.signature || !item.url?.startsWith(`https://github.com/${repo}/releases/download/${tag}/`)) throw Error(`Invalid ${platform} metadata`);
-  const name = decodeURIComponent(new URL(item.url).pathname.split('/').pop());
+  if (!item?.signature || !item?.url) throw Error(`Invalid ${platform} metadata`);
+  const itemUrl = new URL(item.url);
+  const releasePrefix = `/${repo}/releases/download/`;
+  if (itemUrl.protocol !== 'https:' || itemUrl.hostname !== 'github.com' || !itemUrl.pathname.startsWith(releasePrefix)) throw Error(`Invalid ${platform} metadata URL`);
+  // Draft-release assets use GitHub's temporary `untagged-*` download segment.
+  // Once published, the same assets resolve under the final tag. Validate the
+  // repository and asset itself here instead of requiring the tag too early.
+  const name = decodeURIComponent(itemUrl.pathname.split('/').pop());
   const binary = release.assets.find(a=>a.name===name), signature = release.assets.find(a=>a.name===`${name}.sig`);
   if (!binary?.size || !signature?.size) throw Error(`${platform} references missing artifact/signature: ${name}`);
   if (download(signature.id).trim() !== item.signature.trim()) throw Error(`${platform} signature differs from uploaded .sig`);
