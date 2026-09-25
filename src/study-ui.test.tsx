@@ -299,8 +299,16 @@ describe("study interactions", () => {
     for (const index of [0, 1, 2, 3])
       fireEvent.change(attachments[index], { target: { files: [image] } });
 
-    await waitFor(() =>
-      expect(screen.queryAllByRole("button", { name: "Attaching…" })).toHaveLength(0),
+    // FileReader completion can be slower on shared CI runners. Wait for the
+    // observable result of all four uploads rather than the transient busy UI.
+    await waitFor(
+      () =>
+        expect(
+          screen
+            .getAllByLabelText(/image attachment$/)
+            .filter((field) => within(field).queryByRole("img")),
+        ).toHaveLength(4),
+      { timeout: 10_000 },
     );
 
     fireEvent.change(attachments[1], {
