@@ -42,6 +42,7 @@ beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(
     async function (this: HTMLMediaElement) {
       this.dispatchEvent(new Event("play"));
+      this.dispatchEvent(new Event("playing"));
     },
   );
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function (
