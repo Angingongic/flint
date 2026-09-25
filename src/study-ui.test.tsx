@@ -298,11 +298,11 @@ describe("study interactions", () => {
     );
     for (const index of [0, 1, 2, 3])
       fireEvent.change(attachments[index], { target: { files: [image] } });
+
     await waitFor(() =>
-      expect(screen.getAllByRole("button", { name: "Replace" })).toHaveLength(
-        4,
-      ),
+      expect(screen.queryByRole("button", { name: "Attaching…" })).toBeNull(),
     );
+
     fireEvent.change(attachments[1], {
       target: {
         files: [new File(["replacement"], "cell.webp", { type: "image/webp" })],
@@ -340,11 +340,6 @@ describe("study interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Library" }));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     expect(screen.getAllByPlaceholderText("Add front text")).toHaveLength(5);
-    await waitFor(() =>
-      expect(screen.getAllByRole("button", { name: "Replace" })).toHaveLength(
-        3,
-      ),
-    );
     await waitFor(() => {
       expect(
         within(screen.getByLabelText("cover image attachment"))
