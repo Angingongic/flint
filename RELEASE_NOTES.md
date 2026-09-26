@@ -1,4 +1,11 @@
-# Flint 2.0.0
+# Flint 2.1.0
+
+## Flint 2.1 — confident study, clearer feedback
+
+- Layered offline grading now distinguishes exact answers, equivalent math, safe typos, protected facts, contradictions, and conservative WordNet-backed synonyms.
+- Learn shows adaptive recognition and recall phases with restart/shuffle controls and keyboard-friendly feedback continuation.
+- Test setup supports exact-answer and accent requirements, while using the same deterministic grading rules.
+- Added Princeton WordNet attribution and a single canonical download URL for update guidance.
 
 ## Flint 2.0 — Everything you know. Reimagined.
 

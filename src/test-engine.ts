@@ -1,4 +1,4 @@
-import { Card, isValidCardDraft } from "./lib";
+import { Card, isValidCardDraft, gradeAnswer } from "./lib";
 import { selectTargets, type Target } from "./structured";
 import { shuffle, sides, grade } from "./learn-engine";
 export type TestKind = "choice" | "written" | "boolean" | "matching";
@@ -221,11 +221,17 @@ export function makeTest(
   }
   return questions;
 }
-export function testCorrect(q: TestQuestion, value: string | undefined) {
-  if (q.structuredTargets) return q.structuredTargets.every(target => grade(structuredAnswers(value)[target.id] || "",target.answer) !== "INCORRECT");
+export interface TestGradingOptions { requireExact?: boolean; requireAccents?: boolean; }
+export function testCorrect(q: TestQuestion, value: string | undefined, options: TestGradingOptions = {}) {
+  const strict = options.requireExact !== false;
+  const accents = options.requireAccents !== false;
+  const writtenCorrect = (input: string, expected: string) => strict
+    ? gradeAnswer(input, expected, "strict", accents) !== "INCORRECT"
+    : grade(input, expected, "normal", accents) !== "INCORRECT";
+  if (q.structuredTargets) return q.structuredTargets.every(target => writtenCorrect(structuredAnswers(value)[target.id] || "",target.answer));
   if (!value?.trim()) return false;
   return q.kind === "written"
-    ? grade(value, q.answer) !== "INCORRECT"
+    ? writtenCorrect(value, q.answer)
     : q.kind === "boolean"
       ? value === String(q.truth)
       : value === q.card.id;

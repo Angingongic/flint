@@ -5,7 +5,8 @@ import { AnswerMark } from "./AnswerMark";
 import { readPreference, writePreference } from "./preferences";
 import { SingleCardEditor } from "./SingleCardEditor";
 import { StudyScope } from "./StudyScope";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { RotateCcw, Shuffle as ShuffleIcon, RefreshCw } from "lucide-react";
 import { Deck, isValidCardDraft } from "./lib";
 import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
 import { StructuredView } from "./StructuredView";
@@ -38,6 +39,7 @@ import {
   answerLearnGroup,
   prepareLearnChoices,
   sides,
+  phaseSize, phaseProgress,
 } from "./learn-engine";
 import "./study.css";
 import { DeferredLoading, Progress, motion, useReducedMotion } from "./motion";
@@ -705,7 +707,7 @@ function WaveLearnSession({
   }, [phase]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (response?.saved && e.key === "Enter") {
+      if (response?.saved && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !editableTarget(e.target) && (e.key === "Enter" || e.key === " " || e.key.length === 1)) {
         e.preventDefault();
         dismissFeedback();
         return;
@@ -879,7 +881,7 @@ function WaveLearnSession({
       <div className="session-heading">
         <Back done={done} />
         <span>{deck.title} · Learn</span>
-        {state && <details className="learn-actions"><summary>Session actions</summary><button disabled={saving || !!response} onClick={()=>void restartLearn()}>Restart</button><button disabled={saving || !!response} onClick={()=>void commit(shuffleLearn(state))}>Shuffle</button><button disabled={saving || !!response} onClick={()=>void restartLearn(true)}>Restart &amp; Shuffle</button></details>}
+        {state && <details className="learn-actions"><summary>Session actions</summary><button aria-label="Restart Learn" title="Restart Learn" disabled={saving || !!response} onClick={()=>void restartLearn()}><RotateCcw size={15}/>Restart</button><button aria-label="Shuffle remaining" title="Shuffle remaining" disabled={saving || !!response} onClick={()=>void commit(shuffleLearn(state))}><ShuffleIcon size={15}/>Shuffle</button><button aria-label="Restart and shuffle" title="Restart and shuffle" disabled={saving || !!response} onClick={()=>void restartLearn(true)}><RefreshCw size={15}/>Restart &amp; Shuffle</button></details>}
       </div>
       {error && <p role="alert">{error}</p>}
       {!loaded ? (
@@ -914,8 +916,8 @@ function WaveLearnSession({
                     setOptions({ ...options, waveSize: +e.target.value })
                   }
                 >
-                  {[4, 5, 7, 10].map((n) => (
-                    <option key={n}>{n}</option>
+                  {[0, 2, 3, 4, 5, 7, 10].map((n) => (
+                    <option key={n} value={n}>{n===0?`Auto (${phaseSize(learnIds(deck.cards).length)})`:n}</option>
                   ))}
                 </select>
               </label>
@@ -985,7 +987,7 @@ function WaveLearnSession({
                     <span>
                       {kind === "choice" ? "Recognition" : "Recall"}{" "}
                       <small>
-                        {completed} / {state.wave.length}
+                        {phaseProgress(state,kind).current} / {phaseProgress(state,kind).phases} · {Math.round((phaseProgress(state,kind).answeredInPhase/Math.max(1,phaseProgress(state,kind).size))*100)}%
                       </small>
                     </span>
                     <div
@@ -997,10 +999,11 @@ function WaveLearnSession({
                       aria-valuemax={state.wave.length}
                       aria-valuenow={completed}
                     >
-                      {state.wave.map((id, i) => (
+                      {phaseProgress(state,kind).segments.map((fill, i) => (
                         <i
-                          key={id}
-                          className={i < completed ? "complete" : ""}
+                          key={i}
+                          className={fill>=1 ? "complete" : fill>0 ? "partial" : ""}
+                          style={{"--phase-fill":`${Math.round(fill*100)}%`} as CSSProperties}
                         />
                       ))}
                     </div>

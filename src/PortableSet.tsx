@@ -13,6 +13,7 @@ import { notify } from "./motion";
 import { AudioPlayer } from "./Audio";
 import { DuplicateReview, duplicateCandidates } from "./DuplicateReview";
 import type { DuplicateChoice } from "./editing";
+import { FLINT_DOWNLOAD_URL } from "./downloads";
 export type PortablePreview = {
   token: string;
   deck: Deck;
@@ -201,10 +202,10 @@ export function PortableSets({
       }}
     >
       {error && <p role="alert" style={{whiteSpace:"pre-line"}}>{formatIssue ? formatIssueMessage(formatIssue) : error}</p>}
-      {formatIssue?.kind === "unsupported" && <a className="primary" href="https://github.com/Angingongic/flint/releases/latest" target="_blank" rel="noreferrer">Update Flint</a>}
+      {formatIssue?.kind === "unsupported" && <a className="primary" href={FLINT_DOWNLOAD_URL} target="_blank" rel="noreferrer">Update Flint</a>}
       {formatIssue?.kind === "corrupt" && <button disabled={!formatIssue.repairable || busy || !failedPath} title={formatIssue.repairable ? "Restore missing derived metadata; leave the original file unchanged" : "Required authored content cannot be safely reconstructed"} onClick={async()=>{setBusy(true);try{const result=await invoke<PortablePreview>("preview_flint",{path:failedPath,repair:true});setPreview(result);setError("");setRepaired(true);}catch(e){setError(String(e));}finally{setBusy(false);}}}>Repair Set</button>}
       {repaired && preview && <p role="status">Repair complete. Restored missing derived study scheduling metadata. No study content was changed. The original file was not modified.</p>}
-      <p>Flint opens .flint files after installation. <a href="https://github.com/Angingongic/flint/releases/latest" target="_blank" rel="noreferrer">Download the latest Flint</a></p>
+      <p>Flint opens .flint files after installation. <a href={FLINT_DOWNLOAD_URL} target="_blank" rel="noreferrer">Download the latest Flint</a></p>
       {preview && (
         <div className="portable-import">
           <h2>{preview.deck.title}</h2>

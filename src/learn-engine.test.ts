@@ -10,8 +10,18 @@ import {
   defaultOptions,
   prepareLearnChoices,
   sides,
+  phaseSize,
+  phaseCount,
 } from "./learn-engine";
 describe("wave engine", () => {
+  it("chooses bounded adaptive phases and never creates an empty phase", () => {
+    expect(phaseSize(1)).toBe(1);
+    expect(phaseSize(3)).toBe(2);
+    expect(phaseSize(8)).toBe(3);
+    expect(phaseSize(30)).toBe(6);
+    expect(phaseSize(200)).toBe(15);
+    expect(phaseCount(8, phaseSize(8))).toBe(3);
+  });
   it.each(["Image","Audio","Video"] as const)("resolves %s → text recall before rendering, regardless of requested direction",media=>{
     const card={...newCard("","snow"),id:"snow",["question"+media]:"managed.media"};
     for(const direction of ["terms","definitions","mixed"] as const){

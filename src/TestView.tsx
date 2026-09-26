@@ -37,7 +37,10 @@ function TestSession({
     [direction, setDirection] = useState<"terms" | "definitions" | "both">(
       "definitions",
     ),
-    [instant, setInstant] = useState(false);
+    [instant, setInstant] = useState(false),
+    [requireExact, setRequireExact] = useState(true),
+    [requireAccents, setRequireAccents] = useState(true);
+  const gradingOptions = { requireExact, requireAccents };
   const [answers, setAnswers] = useState<Record<string, string>>({}),
     [flags, setFlags] = useState<string[]>([]),
     [checked, setChecked] = useState<string[]>([]),
@@ -59,7 +62,7 @@ function TestSession({
     (q.matchRows || [q]).some((row) => !testAnswered(row,answers[questionId(row)])),
   );
   const questionCorrect = (q: TestQuestion) =>
-    (q.matchRows || [q]).every((row) => testCorrect(row, answers[questionId(row)]));
+    (q.matchRows || [q]).every((row) => testCorrect(row, answers[questionId(row)], gradingOptions));
   const correct = (questions || []).filter(questionCorrect);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -132,7 +135,7 @@ function TestSession({
           question: q.prompt,
           answer: q.answer,
           user: testAnswer(q, answers[questionId(q)]),
-          correct: testCorrect(q, answers[questionId(q)]),
+          correct: testCorrect(q, answers[questionId(q)], gradingOptions),
           flagged: questions.some(
             (group) =>
               flags.includes(questionId(group)) &&
@@ -251,6 +254,8 @@ function TestSession({
                 <option value="instant">Instant feedback</option>
               </select>
             </label>
+            <label className="test-setting-check"><input type="checkbox" checked={requireExact} onChange={e => setRequireExact(e.target.checked)} /> Require exact written answers</label>
+            <label className="test-setting-check"><input type="checkbox" checked={requireAccents} onChange={e => setRequireAccents(e.target.checked)} /> Require accents</label>
             <button
               className="primary"
               disabled={
@@ -339,7 +344,7 @@ function TestSession({
                       studyMissed({
                         ...deck,
                         cards: rows
-                          .filter((q) => !testCorrect(q, answers[questionId(q)]))
+                          .filter((q) => !testCorrect(q, answers[questionId(q)], gradingOptions))
                           .map((q) => q.card),
                       })
                     }
@@ -377,7 +382,7 @@ function TestSession({
                     submitted ||
                     checked.includes(id) ||
                     (instant && q.kind === "matching" && !!answers[id]),
-                  ok = testCorrect(q, answers[id]);
+                  ok = testCorrect(q, answers[id], gradingOptions);
                 return (
                   <article
                     className="worksheet-question"
@@ -428,7 +433,7 @@ function TestSession({
                           alt="Question visual"
                         />
                       )}
-                      {q.structuredTargets && q.card.structure ? <StructuredView value={q.card.structure} mode={q.card.structure.type==="occlusion"?"choice":"typed"} targetIds={q.structuredTargets.map(t => t.id)} answers={structuredAnswers(answers[id])} onAnswer={(target,value) => { if (!show && !saving && !checked.includes(id)) update(id,JSON.stringify({...structuredAnswers(answers[id]),[target]:value})); }} results={show || checked.includes(id) ? Object.fromEntries(q.structuredTargets.map(t => [t.id,gradeAnswer(structuredAnswers(answers[id])[t.id] || "",t.answer) !== "INCORRECT"])) : undefined} onSubmit={() => { if (instant && !show && testAnswered(q,answers[id])) setChecked(old => [...old,id]); }} /> : q.kind === "written" ? (
+                      {q.structuredTargets && q.card.structure ? <StructuredView value={q.card.structure} mode={q.card.structure.type==="occlusion"?"choice":"typed"} targetIds={q.structuredTargets.map(t => t.id)} answers={structuredAnswers(answers[id])} onAnswer={(target,value) => { if (!show && !saving && !checked.includes(id)) update(id,JSON.stringify({...structuredAnswers(answers[id]),[target]:value})); }} results={show || checked.includes(id) ? Object.fromEntries(q.structuredTargets.map(t => [t.id, testCorrect({...q, structuredTargets:[t]}, JSON.stringify({[t.id]: structuredAnswers(answers[id])[t.id] || ""}), gradingOptions)])) : undefined} onSubmit={() => { if (instant && !show && testAnswered(q,answers[id])) setChecked(old => [...old,id]); }} /> : q.kind === "written" ? (
                         <AnswerInput
                           cards={deck.cards}
                           aria-label={"Answer " + (index + 1)}

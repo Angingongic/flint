@@ -23,6 +23,7 @@ import { AnswerInput, CanonicalAnswer } from "./AnswerInput";
 import { gradeAnswer, ignoreAccents } from "./lib";
 import { MotionPage, Toasts, notify, motion, useReducedMotion } from "./motion";
 import { SetOverview, Flashcards, WaveLearn, WorksheetTest } from "./Study";
+import { FLINT_DOWNLOAD_URL } from "./downloads";
 import {
   CoverPicker,
   normalizeCover,
@@ -2119,6 +2120,7 @@ function CreatePage({
             }}
           >
             + Add card
+            <small className="shortcut-hint">{modifierLabel()} Enter</small>
           </button>
         </div>
       </div>
@@ -2311,11 +2313,12 @@ function AboutSettings() {
         <Logo />
         <div>
           <b>About Flint</b>
-          <p><a href="https://github.com/Angingongic/flint/releases/latest" target="_blank" rel="noreferrer">Official Flint downloads</a></p>
+          <p><a href={FLINT_DOWNLOAD_URL} target="_blank" rel="noreferrer">Official Flint downloads</a></p>
           <p>
             Version {displayVersion(version) || "Loading…"} · Local-first study
             application
           </p>
+          <small>Offline synonym matching uses Princeton WordNet 3.0; license included with Flint.</small>
         </div>
       </span>
     </div>

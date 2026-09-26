@@ -1,4 +1,5 @@
 import { Card, gradeAnswer } from "./lib";
+import { confidenceGrade } from "./confidence";
 import type { AnswerEvidence } from "./confidence";
 
 export type Question = {
@@ -43,6 +44,18 @@ export const defaultOptions: LearnOptions = {
   grading: "normal",
   reinforcement: true,
 };
+/** Deterministic progressive phase size. Zero means automatic sizing. */
+export function phaseSize(total:number):number {
+  if(total<=0)return 1;if(total<=2)return total;if(total<=5)return 2;if(total<=10)return 3;
+  if(total<=15)return 4;if(total<=30)return 6;if(total<=48)return 8;if(total<=75)return 10;
+  if(total<=100)return 12;return 15;
+}
+export function phaseCount(total:number,size=phaseSize(total)){return Math.max(1,Math.ceil(total/Math.max(1,size)));}
+export function phaseProgress(state:WaveState,kind:'choice'|'typed') {
+  const size=state.options.waveSize>0?state.options.waveSize:phaseSize(state.ids.length);
+  const phases=phaseCount(state.ids.length,size),answered=state.answers?.filter(a=>a.question.kind===kind).length||0;
+  return {size,phases,current:Math.min(phases,Math.floor(answered/Math.max(1,size))+1),answeredInPhase:answered%Math.max(1,size),segments:Array.from({length:phases},(_,i)=>Math.max(0,Math.min(1,(answered-i*size)/size)))};
+}
 export function waveQuestions(
   ids: string[],
   options: LearnOptions,
@@ -90,7 +103,8 @@ export function learnIds(cards: Card[]) {
 }
 export function beginLearn(cards: Card[], options = defaultOptions): WaveState {
   const ids = learnIds(cards),
-    wave = ids.slice(0, options.waveSize);
+    waveSize = options.waveSize>0?options.waveSize:phaseSize(ids.length),
+    wave = ids.slice(0, waveSize);
   return {
     version: 1,
     ids,
@@ -162,7 +176,9 @@ export function grade(
   grading: LearnOptions["grading"] = "normal",
   accents?: boolean,
 ): "CORRECT" | "CLOSE" | "INCORRECT" {
-  return gradeAnswer(input, expected, grading, accents);
+  if (grading === "strict") return gradeAnswer(input, expected, "strict", accents);
+  const evidence = confidenceGrade(input, expected, false, accents);
+  return evidence.signals?.trivialTypo ? "CLOSE" : evidence.result === "strong_correct" ? "CORRECT" : evidence.result === "accepted" || evidence.result === "borderline" ? "CLOSE" : "INCORRECT";
 }
 export function answerLearn(
   state: WaveState,
@@ -219,7 +235,7 @@ export function continueWave(state: WaveState): WaveState {
     const rounds=state.rounds+1;
     const complete=()=>({...state,phase:"complete" as const,queue:[],wave:[],checkpoint:false});
     if(state.phase === "learning" && state.introduced < state.ids.length) {
-      const wave=state.ids.slice(state.introduced,state.introduced+state.options.waveSize);
+      const size=state.options.waveSize>0?state.options.waveSize:phaseSize(state.ids.length),wave=state.ids.slice(state.introduced,state.introduced+size);
       return {...state,wave,rounds,introduced:state.introduced+wave.length,queue:waveQuestions(wave,state.options,rounds),checkpoint:false};
     }
     const ids=state.phase === "learning" ? state.ids.filter(id=>(state.mistakes[id]||0)>0 || state.reviewNeeded?.[id]) : state.reinforcement?.failed || [];
@@ -240,7 +256,7 @@ export function continueWave(state: WaveState): WaveState {
     ? weak
     : state.ids.slice(
         state.introduced,
-        state.introduced + state.options.waveSize,
+        state.introduced + (state.options.waveSize>0?state.options.waveSize:phaseSize(state.ids.length)),
       );
   const rounds = state.rounds + 1;
   return {

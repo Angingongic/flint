@@ -967,6 +967,12 @@ button:disabled {
 .phase-meter i.complete {
   background: var(--orange);
 }
+.phase-meter i.partial {
+  background: linear-gradient(90deg, var(--orange) var(--phase-fill, 50%), var(--line) var(--phase-fill, 50%));
+}
+.learn-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.test-setting-check { display: inline-flex; align-items: center; gap: 7px; }
+.add-card .shortcut-hint { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
 .phase-meter:not(.current) {
   opacity: 0.65;
 }
