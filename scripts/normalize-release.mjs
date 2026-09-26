@@ -1,5 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, readFileSync, unlinkSync, openSync, closeSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { normalizeMetadata } from './release-metadata.mjs';
 
 const tag = process.env.RELEASE_TAG;
 const repo = process.env.GITHUB_REPOSITORY;
@@ -13,43 +16,17 @@ const pages = JSON.parse(
 );
 const release = pages.flat().find((r) => r.tag_name === tag);
 if (!release) throw Error(`Release ${tag} not found`);
+if (!release.draft) throw Error('Refusing to modify a published release');
 
 const latest = release.assets.find((a) => a.name === 'latest.json');
 if (!latest) throw Error('Missing latest.json');
 
-const tmp = 'latest.normalized.json';
-const output = openSync(tmp, 'w');
+const metadata = JSON.parse(gh(['api',`repos/${repo}/releases/assets/${latest.id}`,'-H','Accept: application/octet-stream']));
+const normalized = normalizeMetadata(metadata, release, repo, tag);
+const dir = mkdtempSync(join(tmpdir(), 'flint-release-'));
 try {
-  execFileSync(
-    'gh',
-    [
-      'api',
-      `repos/${repo}/releases/assets/${latest.id}`,
-      '-H',
-      'Accept: application/octet-stream',
-    ],
-    { stdio: ['ignore', output, 'inherit'] },
-  );
-} finally {
-  closeSync(output);
-}
-const metadata = JSON.parse(readFileSync(tmp, 'utf8'));
-
-for (const [platform, item] of Object.entries(metadata.platforms || {})) {
-  if (!item?.url) continue;
-  const name = decodeURIComponent(new URL(item.url).pathname.split('/').pop());
-  const asset = release.assets.find((a) => a.name === name);
-  if (!asset) throw Error(`${platform} references missing artifact: ${name}`);
-  item.url = `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(name)}`;
-}
-
-writeFileSync(tmp, JSON.stringify(metadata, null, 2) + '\n');
-gh([
-  'release',
-  'upload',
-  tag,
-  tmp,
-  '--clobber',
-]);
-unlinkSync(tmp);
+  const file = join(dir, 'latest.json');
+  writeFileSync(file, JSON.stringify(normalized,null,2)+'\n');
+  gh(['release','upload',tag,file,'--repo',repo,'--clobber']);
+} finally { rmSync(dir,{recursive:true,force:true}); }
 console.log('Normalized updater URLs to the final release tag.');

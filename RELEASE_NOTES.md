@@ -10,4 +10,6 @@ Build understanding with Diagrams and Tables, shared visual study layouts, Smart
 - Video imports can cache lightweight posters while preserving original media bytes.
 - Sonata is the fourth Flint set format. Existing Prelude, Aria and Cadence sets remain supported through their numeric format identities.
 
-This is a local QA candidate. Publication is withheld until all required validation and production-app checks are complete.
+Available for Windows x64 and macOS (Apple Silicon and Intel, in one universal build).
+
+Flint keeps your library on your device. Back up your library before upgrading. The initial macOS distribution is not Apple-notarized, and Windows may show a SmartScreen warning for an unrecognized publisher.

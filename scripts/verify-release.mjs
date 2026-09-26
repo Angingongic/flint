@@ -18,13 +18,13 @@ for (const platform of Object.keys(metadata.platforms)) {
   const item = metadata.platforms?.[platform];
   if (!item?.signature || !item?.url) throw Error(`Invalid ${platform} metadata`);
   const itemUrl = new URL(item.url);
-  const releasePrefix = `/${repo}/releases/download/`;
-  if (itemUrl.protocol !== 'https:' || itemUrl.hostname !== 'github.com' || !itemUrl.pathname.startsWith(releasePrefix)) throw Error(`Invalid ${platform} metadata URL`);
-  // Draft-release assets use GitHub's temporary `untagged-*` download segment.
-  // Once published, the same assets resolve under the final tag. Validate the
-  // repository and asset itself here instead of requiring the tag too early.
+  const releasePrefix = `/${repo}/releases/download/${tag}/`;
+  if (itemUrl.protocol !== 'https:' || itemUrl.hostname !== 'github.com' || itemUrl.search || itemUrl.hash || !itemUrl.pathname.startsWith(releasePrefix) || itemUrl.pathname.slice(releasePrefix.length).includes('/')) throw Error(`Invalid ${platform} metadata URL`);
+  // Normalization must have replaced all temporary/API URLs before verification.
   const name = decodeURIComponent(itemUrl.pathname.split('/').pop());
   const binary = release.assets.find(a=>a.name===name), signature = release.assets.find(a=>a.name===`${name}.sig`);
+  if (platform === 'windows-x86_64' && !name.endsWith('-setup.exe')) throw Error('Windows updater must use NSIS installer');
+  if (platform.startsWith('darwin-') && !name.endsWith('.app.tar.gz')) throw Error('Mac updater must use app archive');
   if (!binary?.size || !signature?.size) throw Error(`${platform} references missing artifact/signature: ${name}`);
   if (download(signature.id).trim() !== item.signature.trim()) throw Error(`${platform} signature differs from uploaded .sig`);
 }
